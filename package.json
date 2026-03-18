@@ -1,0 +1,9 @@
+{
+  "name": "my-project",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api dev",
+    "dev": "pnpm run dev:web & pnpm run dev:api"
+  }
+}
