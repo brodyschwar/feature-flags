@@ -5,14 +5,14 @@ import type { Request, Response, NextFunction } from 'express';
 const mockFindOne = vi.fn();
 const mockUpdateOne = vi.fn();
 
-vi.mock('../db/collections.js', () => ({
+vi.mock('../src/db/collections.js', () => ({
   getApiKeysCollection: () => ({
     findOne: mockFindOne,
     updateOne: mockUpdateOne,
   }),
 }));
 
-const { requireApiKey } = await import('./requireApiKey.js');
+const { requireApiKey } = await import('../src/middleware/requireApiKey.js');
 
 function makeReq(authHeader?: string): Request {
   return { headers: authHeader ? { authorization: authHeader } : {} } as Request;

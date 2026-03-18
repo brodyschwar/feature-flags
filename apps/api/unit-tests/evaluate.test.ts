@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { evaluate } from './evaluate.js';
-import type { Flag, UserSegmentedRules } from '../schemas/flag.schema.js';
+import { evaluate } from '../src/evaluation/evaluate.js';
+import type { Flag, UserSegmentedRules } from '../src/schemas/flag.schema.js';
 
 const base = {
   id: '00000000-0000-0000-0000-000000000001',

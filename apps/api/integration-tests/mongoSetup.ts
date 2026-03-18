@@ -1,6 +1,6 @@
 import { beforeAll, afterEach, afterAll } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { connectToMongo, disconnectFromMongo, clearAllCollections } from '../db/client.js';
+import { connectToMongo, disconnectFromMongo, clearAllCollections } from '../src/db/client.js';
 
 let mongo: MongoMemoryServer;
 

@@ -10,7 +10,7 @@ vi.mock('jose', () => ({
 
 process.env.CLERK_JWKS_URL = 'https://example.clerk.accounts.dev/.well-known/jwks.json';
 
-const { requireJwt } = await import('./requireJwt.js');
+const { requireJwt } = await import('../src/middleware/requireJwt.js');
 
 function makeReq(authHeader?: string): Request {
   return { headers: authHeader ? { authorization: authHeader } : {} } as Request;

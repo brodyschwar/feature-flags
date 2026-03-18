@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
-import { app } from '../../app.js';
-import '../../test/mongoSetup.js';
+import { app } from '../src/app.js';
+import './mongoSetup.js';
 
-vi.mock('../../middleware/requireJwt.js', () => ({
+vi.mock('../src/middleware/requireJwt.js', () => ({
   requireJwt: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-vi.mock('../../middleware/requireApiKey.js', () => ({
+vi.mock('../src/middleware/requireApiKey.js', () => ({
   requireApiKey: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
