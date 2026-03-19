@@ -150,7 +150,9 @@ All flags share the same routes — the `type` field in the request body is the 
 |---|---|---|---|
 | `GET` | `/flags` | None | List all flags. Supports `?type=boolean\|percentage\|user_segmented` filter. Returns summary fields only (`key`, `name`, `type`, `rules`). |
 | `POST` | `/flags` | JWT | Create a flag. Body is the full discriminated union — Zod validates `rules` shape against `type`. |
+| `GET` | `/flags/definitions` | JWT or API key | Return evaluation-only payloads for all flags (no metadata). SDK caching endpoint. Supports `?type=` filter and ETag/304. |
 | `GET` | `/flags/:key` | None | Get a single flag's full configuration. |
+| `GET` | `/flags/:key/definition` | JWT or API key | Return the evaluation-only payload for a single flag. SDK caching endpoint. Supports ETag/304. |
 | `PATCH` | `/flags/:key` | JWT | Update a flag's `rules` and/or metadata (`name`, `description`). Flag `type` is immutable — delete and recreate if the type must change. |
 | `DELETE` | `/flags/:key` | JWT | Delete a flag. |
 | `POST` | `/flags/:key/evaluate` | JWT or API key | Evaluate a flag. See below. |
@@ -182,6 +184,91 @@ A single endpoint handles all flag types. The evaluator reads what it needs from
 - `boolean` — ignores `context` entirely
 - `percentage` — reads `context.userId`; a missing `userId` evaluates to `false`
 - `user_segmented` — reads `context.attributes`; a missing attribute that a segment tests against is treated as no-match
+
+### Flag Definitions (Client-Side Evaluation)
+
+These endpoints exist to support **client-side evaluation** — the SDK fetches flag rules once, caches them locally, and evaluates without a network round-trip per call. They are the foundation for caching in the SDK.
+
+**Key design constraint:** Responses contain only what is needed to evaluate a flag. Fields like `name`, `description`, `createdAt`, `updatedAt`, and `id` are intentionally excluded — they are metadata for the management UI, not for evaluation.
+
+**Two new routes are added to the routes table (registered before `GET /flags/:key` to avoid the `:key` wildcard swallowing the literal segment):**
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/flags/definitions` | JWT or API key | Return evaluation payloads for **all** flags. Supports `?type=` filter (same as `GET /flags`). |
+| `GET` | `/flags/:key/definition` | JWT or API key | Return the evaluation payload for a single flag by key. |
+
+#### Response shape
+
+Both endpoints use the same per-flag shape — a strict subset of the full flag document:
+
+```ts
+interface FlagDefinition {
+  key: string;
+  type: "boolean" | "percentage" | "user_segmented";
+  rules: BooleanRules | PercentageRules | UserSegmentedRules;
+}
+```
+
+`GET /flags/definitions` wraps results in an envelope:
+
+```ts
+// Response
+{
+  flags: FlagDefinition[];
+}
+```
+
+`GET /flags/:key/definition` returns a single object:
+
+```ts
+// Response — 200
+FlagDefinition
+
+// Response — 404 (flag key not found)
+{ error: string }
+```
+
+#### Caching support (ETag / 304)
+
+To let the SDK avoid re-processing unchanged rules, both endpoints implement HTTP conditional request semantics:
+
+- The server computes a **deterministic ETag** for each response: a SHA-256 hash over the serialised rules payload (not the full document — metadata changes must not invalidate a client's cache).
+- The ETag is returned as the `ETag` response header.
+- If the client sends `If-None-Match: <etag>`, the server compares it against the current ETag and responds with **304 Not Modified** (no body) if unchanged.
+
+```
+// First request
+GET /flags/definitions
+→ 200  ETag: "sha256:a1b2c3..."
+    Body: { flags: [...] }
+
+// Subsequent request (SDK has cached the payload)
+GET /flags/definitions
+If-None-Match: "sha256:a1b2c3..."
+→ 304  (no body — SDK keeps its cached copy)
+```
+
+The ETag computation must be scoped to the **rules fields only** so that administrative edits to `name` or `description` do not bust SDK caches.
+
+#### Auth
+
+Same `requireJwtOrApiKey` middleware used on the evaluate endpoint — both Clerk JWTs (dashboard) and `ff_` API keys (SDK) are accepted. This keeps the auth model consistent and avoids introducing a new credential type.
+
+#### SDK caching workflow (expected usage)
+
+```
+1. On startup: GET /flags/definitions → cache FlagDefinition[] + store ETag
+2. On evaluate("flag-key", context):
+     a. Look up flag in local cache
+     b. Run pure evaluate() logic locally — no network call
+3. On refresh (timer or manual):
+     GET /flags/definitions, If-None-Match: <cached-etag>
+     → 304 → do nothing
+     → 200 → replace cache, store new ETag
+4. On cache miss (flag key not found locally):
+     GET /flags/:key/definition → add to cache
+```
 
 ---
 
