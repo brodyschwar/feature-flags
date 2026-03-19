@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { getFlagsCollection, docToFlag } from '../../db/collections.js';
 import { requireJwt } from '../../middleware/requireJwt.js';
 import { requireApiKey } from '../../middleware/requireApiKey.js';
+import { requireJwtOrApiKey } from '../../middleware/requireJwtOrApiKey.js';
 import {
   CreateFlagBodySchema,
   UpdateFlagBodySchema,
@@ -116,7 +117,7 @@ flagsRouter.delete('/:key', requireJwt, async (req, res) => {
 });
 
 // POST /flags/:key/evaluate
-flagsRouter.post('/:key/evaluate', requireApiKey, async (req, res) => {
+flagsRouter.post('/:key/evaluate', requireJwtOrApiKey, async (req, res) => {
   const collection = getFlagsCollection();
   const doc = await collection.findOne({ key: req.params.key } as Parameters<typeof collection.findOne>[0]);
   if (!doc) {
