@@ -46,7 +46,7 @@ export function ApiKeyListPage() {
             </TableHead>
             <TableBody>
               {keys.map((k) => (
-                <TableRow key={k._id}>
+                <TableRow key={k.id}>
                   <TableCell>{k.name}</TableCell>
                   <TableCell>{formatDate(k.createdAt)}</TableCell>
                   <TableCell>
@@ -62,7 +62,7 @@ export function ApiKeyListPage() {
                           color="error"
                           onClick={() => {
                             if (confirm(`Revoke key "${k.name}"?`)) {
-                              deleteKey.mutate(k._id);
+                              deleteKey.mutate(k.id);
                             }
                           }}
                         >

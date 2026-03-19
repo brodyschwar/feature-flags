@@ -36,7 +36,7 @@ export type Flag = BooleanFlag | PercentageFlag | UserSegmentedFlag;
 export type FlagType = Flag['type'];
 
 export interface ApiKey {
-  _id: string;
+  id: string;
   name: string;
   createdAt: number;
   lastUsedAt: number | null;

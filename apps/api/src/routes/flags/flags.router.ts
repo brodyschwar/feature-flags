@@ -26,7 +26,7 @@ flagsRouter.get('/', async (req, res) => {
   const docs = await getFlagsCollection().find(filter).toArray();
   const flags = docs.map(doc => {
     const flag = docToFlag(doc);
-    return { id: flag.id, key: flag.key, name: flag.name, type: flag.type, rules: flag.rules };
+    return { id: flag.id, key: flag.key, name: flag.name, type: flag.type, rules: flag.rules, updatedAt: flag.updatedAt };
   });
   res.json(flags);
 });
