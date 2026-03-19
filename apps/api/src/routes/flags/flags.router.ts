@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { getFlagsCollection, docToFlag } from '../../db/collections.js';
 import { requireJwt } from '../../middleware/requireJwt.js';
-import { requireApiKey } from '../../middleware/requireApiKey.js';
 import { requireJwtOrApiKey } from '../../middleware/requireJwtOrApiKey.js';
 import {
   CreateFlagBodySchema,
