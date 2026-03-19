@@ -5,6 +5,8 @@
     "dev:web": "pnpm --filter web dev",
     "dev:api": "pnpm --filter api dev",
     "test:api": "pnpm --filter api test",
+    "build:sdk": "pnpm --filter @feature-flags/ts-sdk build",
+    "test:sdk": "pnpm --filter @feature-flags/ts-sdk test",
     "dev": "pnpm run dev:web & pnpm run dev:api"
   }
 }
