@@ -45,7 +45,8 @@ apps/api/
 │   │   ├── requireJwt.ts                # Verifies Clerk JWT via JWKS; attaches decoded claims to req
 │   │   ├── requireJwt.test.ts           # Unit tests
 │   │   ├── requireApiKey.ts             # SHA-256 hashes incoming key, looks up in api_keys collection
-│   │   └── requireApiKey.test.ts        # Unit tests
+│   │   ├── requireApiKey.test.ts        # Unit tests
+│   │   └── requireJwtOrApiKey.ts        # Accepts either a Clerk JWT or an ff_ API key — used on the evaluate endpoint
 │   │
 │   ├── routes/
 │   │   ├── flags/
@@ -145,14 +146,14 @@ All flags share the same routes — the `type` field in the request body is the 
 
 ### Routes
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/flags` | List all flags. Supports `?type=boolean\|percentage\|user_segmented` filter. Returns summary fields only (`key`, `name`, `type`, `rules`). |
-| `POST` | `/flags` | Create a flag. Body is the full discriminated union — Zod validates `rules` shape against `type`. |
-| `GET` | `/flags/:key` | Get a single flag's full configuration. |
-| `PATCH` | `/flags/:key` | Update a flag's `rules` and/or metadata (`name`, `description`). Flag `type` is immutable — delete and recreate if the type must change. |
-| `DELETE` | `/flags/:key` | Delete a flag. |
-| `POST` | `/flags/:key/evaluate` | Evaluate a flag. See below. |
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/flags` | None | List all flags. Supports `?type=boolean\|percentage\|user_segmented` filter. Returns summary fields only (`key`, `name`, `type`, `rules`). |
+| `POST` | `/flags` | JWT | Create a flag. Body is the full discriminated union — Zod validates `rules` shape against `type`. |
+| `GET` | `/flags/:key` | None | Get a single flag's full configuration. |
+| `PATCH` | `/flags/:key` | JWT | Update a flag's `rules` and/or metadata (`name`, `description`). Flag `type` is immutable — delete and recreate if the type must change. |
+| `DELETE` | `/flags/:key` | JWT | Delete a flag. |
+| `POST` | `/flags/:key/evaluate` | JWT or API key | Evaluate a flag. See below. |
 
 ### Evaluation
 
@@ -190,23 +191,19 @@ There are two distinct callers with different needs:
 
 | Caller | Routes | Needs |
 |---|---|---|
-| Human admin (dashboard) | All CRUD routes + `/api-keys` | Login flow, session, identity |
+| Human admin (dashboard) | All CRUD routes + `/api-keys` + evaluate | Login flow, session, identity |
 | Machine caller (SDK/service) | `POST /flags/:key/evaluate` only | Lightweight, no login flow |
 
 These are solved differently. Forcing SDK callers through OAuth is unnecessary overhead; giving admins a raw API key is a security step down.
 
 ### Provider: Clerk
 
-**Clerk** is the recommended auth provider for human admin auth.
-
-Add to Tech Stack:
-
 | Concern | Choice |
 |---|---|
 | Human auth provider | Clerk (free tier, JWT-based) |
 | Machine auth | API keys (self-managed, stored in MongoDB) |
 
-### Human auth — JWT middleware
+### Human auth — JWT middleware (`requireJwt`)
 
 Management routes require a valid Clerk JWT in the `Authorization` header.
 
@@ -214,7 +211,7 @@ Management routes require a valid Clerk JWT in the `Authorization` header.
 Authorization: Bearer <clerk_jwt>
 ```
 
-The Express middleware verifies the token against Clerk's JWKS endpoint (`https://<clerk-domain>/.well-known/jwks.json`). No user session is stored server-side — the JWT is stateless.
+The middleware verifies the token against Clerk's JWKS endpoint (configured via `CLERK_JWKS_URL`). No user session is stored server-side — the JWT is stateless.
 
 **Protected routes** (require JWT):
 - `POST /flags`
@@ -222,11 +219,11 @@ The Express middleware verifies the token against Clerk's JWKS endpoint (`https:
 - `DELETE /flags/:key`
 - All `/api-keys` routes
 
-**Public routes** (no auth, read-only for now — can be locked down later):
+**Public routes** (no auth):
 - `GET /flags`
 - `GET /flags/:key`
 
-### Machine auth — API keys
+### Machine auth — API keys (`requireApiKey`)
 
 SDK and service callers use API keys to authenticate evaluation requests.
 
@@ -235,6 +232,8 @@ Authorization: Bearer ff_<random>
 ```
 
 The middleware hashes the incoming value with SHA-256 and looks it up in the `api_keys` collection. Only the hash is stored — the plaintext is shown once on creation and never retrievable again.
+
+Key format: `ff_` prefix + 32 random URL-safe base64 characters. The prefix makes keys grep-able in logs and easy to identify if accidentally leaked.
 
 #### `api_keys` collection
 
@@ -257,7 +256,14 @@ These routes are protected by JWT (admin only).
 | `GET` | `/api-keys` | List all keys with metadata. Never returns the key value or hash. |
 | `DELETE` | `/api-keys/:id` | Revoke a key by its `_id` (the hash). |
 
-Key format: `ff_` prefix + 32 random URL-safe base64 characters. The prefix makes keys grep-able in logs and easy to identify if accidentally leaked.
+### Dual auth — evaluate endpoint (`requireJwtOrApiKey`)
+
+`POST /flags/:key/evaluate` accepts either credential type. The middleware distinguishes them by the `ff_` prefix:
+
+- Credential starts with `ff_` → API key path (hash + DB lookup)
+- Otherwise → JWT path (JWKS verification)
+
+This lets the dashboard evaluate flags using its existing Clerk session without embedding an API key in the frontend bundle.
 
 ### Auth flow summary
 
@@ -265,15 +271,24 @@ Key format: `ff_` prefix + 32 random URL-safe base64 characters. The prefix make
 Dashboard user
   └─ logs in via Clerk
   └─ receives JWT
-  └─ sends JWT on every management request
+  └─ sends JWT on every request (management + evaluate)
   └─ Express verifies JWT signature against Clerk's JWKS
 
 SDK / service
   └─ admin creates API key via dashboard
   └─ key stored (hashed) in MongoDB
-  └─ SDK sends key on every evaluate request
+  └─ SDK sends ff_ key on evaluate requests
   └─ Express hashes incoming key, looks up in api_keys collection
 ```
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `MONGO_URI` | Yes | MongoDB connection string (Atlas or local) |
+| `CLERK_JWKS_URL` | Yes | Clerk JWKS endpoint, e.g. `https://<clerk-domain>/.well-known/jwks.json` |
+| `PORT` | No | Server port (default: `3001`) |
+| `CORS_ORIGIN` | No | Allowed CORS origin (default: `http://localhost:5173`) |
 
 ---
 
@@ -347,7 +362,8 @@ src/
 │   ├── requireJwt.ts
 │   ├── requireJwt.test.ts      ← unit
 │   ├── requireApiKey.ts
-│   └── requireApiKey.test.ts   ← unit
+│   ├── requireApiKey.test.ts   ← unit
+│   └── requireJwtOrApiKey.ts   ← no dedicated test; delegates to the two above
 └── routes/
     ├── flags/
     │   ├── flags.router.ts
