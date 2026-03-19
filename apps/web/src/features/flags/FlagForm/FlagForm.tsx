@@ -21,6 +21,7 @@ export function FlagFormFields({ disableTypeSelect = false }: Props) {
         error={!!(errors as any).key}
         helperText={(errors as any).key?.message}
         placeholder="e.g. new-checkout-flow"
+        disabled={disableTypeSelect}
       />
       <TextField
         label="Name"
@@ -41,7 +42,7 @@ export function FlagFormFields({ disableTypeSelect = false }: Props) {
         size="small"
         select
         disabled={disableTypeSelect}
-        defaultValue="boolean"
+        value={type ?? 'boolean'}
         {...register('type')}
       >
         <MenuItem value="boolean">Boolean</MenuItem>

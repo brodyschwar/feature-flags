@@ -2,16 +2,16 @@ import { useParams, useNavigate } from 'react-router';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Box, Paper, Button, Alert, CircularProgress, Typography, Chip, Divider } from '@mui/material';
+import { Box, Paper, Button, Alert, CircularProgress, Typography, Chip } from '@mui/material';
 import { PageHeader } from '../../components/Layout/PageHeader';
 import { FlagFormFields } from './FlagForm/FlagForm';
 import { EvaluatePanel } from './EvaluatePanel';
 import { useFlag, useUpdateFlag, useDeleteFlag } from '../../hooks/useFlags';
 import { useEffect } from 'react';
 import { SignedIn } from '@clerk/clerk-react';
-import type { Flag } from '../../types/flag';
 
 const patchSchema = z.object({
+  key: z.string(),
   name: z.string().min(1, 'Required'),
   description: z.string(),
   type: z.string(),
@@ -33,7 +33,7 @@ export function FlagDetailPage() {
 
   useEffect(() => {
     if (flag) {
-      methods.reset({ name: flag.name, description: flag.description, type: flag.type, rules: flag.rules });
+      methods.reset({ key: flag.key, name: flag.name, description: flag.description, type: flag.type, rules: flag.rules });
     }
   }, [flag, methods]);
 
