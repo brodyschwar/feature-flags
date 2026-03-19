@@ -13,8 +13,8 @@ import { Button } from '@mui/material';
 const DRAWER_WIDTH = 220;
 
 const NAV_ITEMS = [
-  { label: 'Flags', href: '/flags', icon: <FlagIcon /> },
-  { label: 'API Keys', href: '/api-keys', icon: <KeyIcon /> },
+  { label: 'Flags', href: '/flags', icon: <FlagIcon />, authRequired: false },
+  { label: 'API Keys', href: '/api-keys', icon: <KeyIcon />, authRequired: true },
 ];
 
 export function AppShell() {
@@ -29,24 +29,27 @@ export function AppShell() {
       </Toolbar>
       <Divider />
       <List>
-        {NAV_ITEMS.map(({ label, href, icon }) => (
-          <ListItem key={href} disablePadding>
-            <ListItemButton
-              component={NavLink}
-              to={href}
-              sx={{
-                '&.active': {
-                  bgcolor: 'primary.main',
-                  color: 'primary.contrastText',
-                  '& .MuiListItemIcon-root': { color: 'inherit' },
-                },
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 36 }}>{icon}</ListItemIcon>
-              <ListItemText primary={label} />
-            </ListItemButton>
-          </ListItem>
-        ))}
+        {NAV_ITEMS.map(({ label, href, icon, authRequired }) => {
+          const button = (
+            <ListItem key={href} disablePadding>
+              <ListItemButton
+                component={NavLink}
+                to={href}
+                sx={{
+                  '&.active': {
+                    bgcolor: 'primary.main',
+                    color: 'primary.contrastText',
+                    '& .MuiListItemIcon-root': { color: 'inherit' },
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36 }}>{icon}</ListItemIcon>
+                <ListItemText primary={label} />
+              </ListItemButton>
+            </ListItem>
+          );
+          return authRequired ? <SignedIn key={href}>{button}</SignedIn> : button;
+        })}
       </List>
     </Box>
   );
