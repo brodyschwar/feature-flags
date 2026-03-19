@@ -103,7 +103,7 @@ export function useApiClient() {
 }
 ```
 
-The `<ClerkProvider>` wraps the entire app in `main.tsx`. Routes that require auth are wrapped with Clerk's `<SignedIn>` / `<RedirectToSignIn>` guards.
+The `<ClerkProvider>` wraps the entire app in `main.tsx`. Routes that require auth are wrapped with a `<RequireAuth>` component (defined in `router.tsx`) that uses `useAuth()` to redirect unauthenticated users to `/sign-in`.
 
 ---
 
@@ -149,7 +149,7 @@ export type UserSegmentedFlag = FlagBase & {
 export type Flag = BooleanFlag | PercentageFlag | UserSegmentedFlag;
 
 export interface ApiKey {
-  _id: string;
+  id: string;       // SHA-256 hash of the key — returned as `id` by GET /api-keys
   name: string;
   createdAt: number;
   lastUsedAt: number | null;
@@ -206,20 +206,24 @@ const booleanFlagSchema = z.object({
 
 | Variable | Purpose |
 |---|---|
-| `VITE_API_URL` | Base URL for the API, e.g. `http://localhost:3000` |
+| `VITE_API_URL` | Base URL for the API, e.g. `http://localhost:3001` — no trailing slash, no quotes |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key — safe to expose in the browser |
 
-Both must be present in a `.env.local` file (not committed).
+Both must be present in a `.env.local` file (not committed). Do not wrap values in quotes — Vite includes them literally.
 
 ---
 
 ## Pages & Routes
 
-| Path | Component | Auth required |
-|---|---|---|
-| `/` | Redirect → `/flags` | No |
-| `/flags` | `FlagListPage` | No |
-| `/flags/new` | `CreateFlagPage` | Yes |
-| `/flags/:key` | `FlagDetailPage` | Yes |
-| `/api-keys` | `ApiKeyListPage` | Yes |
-| `/sign-in` | Clerk `<SignIn>` | No |
+| Path | Component | Auth required | Notes |
+|---|---|---|---|
+| `/` | Redirect → `/flags` | No | |
+| `/flags` | `FlagListPage` | No | Create button hidden when signed out |
+| `/flags/new` | `CreateFlagPage` | Yes | Redirects to `/sign-in` if not authenticated |
+| `/flags/:key` | `FlagDetailPage` | Yes | Key and Type fields are read-only; Save/Delete hidden when signed out |
+| `/api-keys` | `ApiKeyListPage` | Yes | Nav item hidden when signed out |
+| `/sign-in` | Clerk `<SignIn>` | No | |
+
+Auth enforcement has two layers:
+1. **Nav** — the "API Keys" sidebar link is filtered out via `useAuth()` when not signed in
+2. **Route** — `<RequireAuth>` wraps protected routes and redirects unauthenticated users to `/sign-in`
