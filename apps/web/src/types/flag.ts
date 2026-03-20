@@ -40,4 +40,5 @@ export interface ApiKey {
   name: string;
   createdAt: number;
   lastUsedAt: number | null;
+  deletable: boolean;
 }

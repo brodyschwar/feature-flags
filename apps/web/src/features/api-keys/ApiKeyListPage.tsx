@@ -56,19 +56,21 @@ export function ApiKeyListPage() {
                   </TableCell>
                   <TableCell align="right">
                     <SignedIn>
-                      <Tooltip title="Revoke key">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => {
-                            if (confirm(`Revoke key "${k.name}"?`)) {
-                              deleteKey.mutate(k.id);
-                            }
-                          }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      {k.deletable && (
+                        <Tooltip title="Revoke key">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => {
+                              if (confirm(`Revoke key "${k.name}"?`)) {
+                                deleteKey.mutate(k.id);
+                              }
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </SignedIn>
                   </TableCell>
                 </TableRow>
