@@ -9,7 +9,7 @@ import AddIcon from '@mui/icons-material/Add';
 const OPERATORS = ['eq', 'neq', 'in', 'not_in', 'contains', 'regex'] as const;
 
 export function UserSegmentedRuleFields() {
-  const { control, register, formState: { errors } } = useFormContext();
+  const { control, register } = useFormContext();
   const { fields, append, remove } = useFieldArray({ control, name: 'rules.segments' });
 
   return (
@@ -47,10 +47,6 @@ export function UserSegmentedRuleFields() {
               label="Values (comma-separated)"
               size="small"
               sx={{ flex: 2, minWidth: 180 }}
-              onChange={(e) => {
-                const arr = e.target.value.split(',').map((v) => v.trim()).filter(Boolean);
-                // We need to use setValue here — use a workaround via register
-              }}
               defaultValue=""
               {...register(`rules.segments.${i}.values`, {
                 setValueAs: (v: string | string[]) =>
