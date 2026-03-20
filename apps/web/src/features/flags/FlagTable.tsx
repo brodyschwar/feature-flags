@@ -7,6 +7,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import type { Flag } from '../../types/flag';
 import { formatDate } from '../../lib/utils';
 import { useDeleteFlag } from '../../hooks/useFlags';
+import { SignedIn } from '@clerk/clerk-react';
 
 interface Props {
   flags: Flag[];
@@ -48,7 +49,8 @@ export function FlagTable({ flags }: Props) {
                 <Chip label={flag.type} size="small" color={TYPE_COLOR[flag.type]} />
               </TableCell>
               <TableCell>{formatDate(flag.updatedAt)}</TableCell>
-              <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+              <SignedIn>
+                <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                 <Tooltip title="Delete flag">
                   <IconButton
                     size="small"
@@ -63,6 +65,7 @@ export function FlagTable({ flags }: Props) {
                   </IconButton>
                 </Tooltip>
               </TableCell>
+              </SignedIn>
             </TableRow>
           ))}
           {flags.length === 0 && (
