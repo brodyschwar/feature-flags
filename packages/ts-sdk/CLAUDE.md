@@ -241,6 +241,12 @@ Fetches `GET /flags/definitions`. Handles the ETag/304 exchange so callers don't
 getDefinitions(opts?: {
   /** Filters by flag type. */
   type?: "boolean" | "percentage" | "user_segmented";
+  /**
+   * Return only definitions for the listed flag keys.
+   * Sent as `?keys=flag-a,flag-b` on the request.
+   * Unknown keys are silently omitted by the server.
+   */
+  keys?: string[];
   /** ETag from a previous response. Triggers a conditional request. */
   ifNoneMatch?: string;
 }): Promise<{ flags: FlagDefinition[]; etag: string } | null>
@@ -275,10 +281,24 @@ A stateful wrapper that owns the local cache. It takes a `FeatureFlagClient` as 
 
 #### Constructor
 
+`CachedFlagEvaluator` is generic on `T extends string`, which is the union of flag keys that a service cares about. TypeScript infers `T` automatically from the `flags` array when `as const` is used — no explicit type annotation needed.
+
 ```ts
-interface CachedFlagEvaluatorOptions {
+interface CachedFlagEvaluatorOptions<T extends string> {
   /** The HTTP client used to fetch definitions. */
   client: FeatureFlagClient;
+  /**
+   * The flag keys this service uses. Serves dual purpose:
+   *
+   * - **Runtime:** sent as `?keys=...` to `GET /flags/definitions`, so only
+   *   relevant flag definitions are fetched and cached.
+   * - **Compile time:** with `as const`, TypeScript infers the literal union type `T`
+   *   and constrains `evaluate()` to only accept those keys.
+   *
+   * Pass `as const` to get literal-type inference:
+   *   flags: ["flag-a", "flag-b"] as const
+   */
+  flags: readonly T[];
   /**
    * How long (ms) cached definitions are considered fresh before a refresh
    * is triggered. Default: 30_000 (30 seconds).
@@ -298,8 +318,8 @@ interface CachedFlagEvaluatorOptions {
   staleWhileRevalidate?: boolean;
 }
 
-class CachedFlagEvaluator {
-  constructor(options: CachedFlagEvaluatorOptions);
+class CachedFlagEvaluator<T extends string> {
+  constructor(options: CachedFlagEvaluatorOptions<T>);
 }
 ```
 
@@ -309,21 +329,25 @@ class CachedFlagEvaluator {
 /**
  * Evaluate a flag locally using the cached definition.
  *
+ * `flagKey` is constrained to the union `T` — passing a key not listed in
+ * `flags` is a compile-time error.
+ *
  * If the cache is cold or the TTL has expired:
  *   - staleWhileRevalidate=false (default): awaits a cache refresh first.
  *   - staleWhileRevalidate=true: returns the stale cached value immediately
  *     and triggers a background refresh for subsequent calls.
  *
- * If the flag key is not found after a bulk refresh, falls back to
- * getDefinition(key) to handle flags created since the last bulk fetch.
+ * If the flag key is not found after a bulk refresh (e.g. the flag was just
+ * created), falls back to getDefinition(key) as a safety net.
  *
  * Throws FeatureFlagError if the flag cannot be found after both attempts.
  */
-evaluate(flagKey: string, context?: EvaluationContext): Promise<boolean>;
+evaluate(flagKey: T, context?: EvaluationContext): Promise<boolean>;
 
 /**
- * Pre-populate the cache with all flag definitions. Call this once at
- * startup to eliminate cold-start latency on the first evaluate() call.
+ * Pre-populate the cache with the flag definitions for the configured keys.
+ * Call once at startup to eliminate cold-start latency on the first evaluate().
+ * Only fetches the flags listed in the `flags` constructor option.
  */
 warm(): Promise<void>;
 
@@ -345,19 +369,27 @@ const client = new FeatureFlagClient({
   apiKey: "ff_...",
 });
 
+// `as const` lets TypeScript infer the literal union type from the array.
+// T is inferred as "new-transaction-flow" | "pro-number-range" | "extended-color-palette".
 const evaluator = new CachedFlagEvaluator({
   client,
+  flags: ["new-transaction-flow", "pro-number-range", "extended-color-palette"] as const,
   ttl: 60_000, // refresh every 60 seconds
 });
 
-// Optional: warm the cache at startup to avoid cold-start latency
+// Optional: warm the cache at startup to avoid cold-start latency.
+// Only fetches the three flags listed above — not the full DB.
 await evaluator.warm();
 
-// Evaluate locally — no HTTP call if the cache is warm and fresh
+// Evaluate locally — no HTTP call if the cache is warm and fresh.
+// Only keys in the `flags` array are accepted — others are compile errors.
 const enabled = await evaluator.evaluate("new-transaction-flow", {
   userId: "user_123",
   attributes: { plan: "pro" },
 });
+
+// ✗ Compile error — "unknown-flag" is not in the flags array
+const bad = await evaluator.evaluate("unknown-flag", context);
 ```
 
 ---
@@ -399,8 +431,9 @@ This means a periodic refresh costs only a round-trip (no body) when nothing has
 ### Internal State
 
 ```ts
-// Inside CachedFlagEvaluator
-private cache: Map<string, FlagDefinition>;  // key → definition
+// Inside CachedFlagEvaluator<T>
+private readonly flagKeys: readonly T[];       // keys to fetch — from constructor options
+private cache: Map<string, FlagDefinition>;   // key → definition
 private etag: string | null;                  // last etag from getDefinitions()
 private fetchedAt: number | null;             // Date.now() at last successful refresh
 private inflightRefresh: Promise<void> | null; // single-flight lock
@@ -423,7 +456,11 @@ const client = new FeatureFlagClient({
   apiKey: process.env.FLAGS_API_KEY!,
 });
 
-export const flags = new CachedFlagEvaluator({ client, ttl: 30_000 });
+export const flags = new CachedFlagEvaluator({
+  client,
+  flags: ["new-transaction-flow", "pro-number-range"] as const,
+  ttl: 30_000,
+});
 ```
 
 ```ts
@@ -495,7 +532,7 @@ Mock `FeatureFlagClient` directly (inject a mock instance). Test:
 
 | Scenario | What to verify |
 |---|---|
-| Cold cache → evaluate() | Calls `getDefinitions()`, evaluates locally |
+| Cold cache → evaluate() | Calls `getDefinitions({ keys })`, evaluates locally |
 | Warm cache within TTL | Does NOT call `getDefinitions()` |
 | Stale cache (default mode) | Awaits refresh before returning result |
 | Stale cache (staleWhileRevalidate) | Returns stale value immediately; refresh called in background |
@@ -503,8 +540,9 @@ Mock `FeatureFlagClient` directly (inject a mock instance). Test:
 | 200 on refresh | Cache entries replaced with new definitions |
 | Single-flight: concurrent calls on stale cache | `getDefinitions()` called exactly once |
 | Cache miss after bulk refresh | Falls back to `getDefinition(key)` |
-| `warm()` | Calls `getDefinitions()`, populates all keys |
+| `warm()` | Calls `getDefinitions({ keys })` with the configured keys; populates only those |
 | `refresh()` while refresh in flight | Returns same Promise; no second HTTP call |
+| `getDefinitions` called with correct `keys` | `?keys=` query param matches the `flags` array passed to the constructor |
 
 ---
 

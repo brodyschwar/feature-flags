@@ -150,7 +150,7 @@ All flags share the same routes — the `type` field in the request body is the 
 |---|---|---|---|
 | `GET` | `/flags` | None | List all flags. Supports `?type=boolean\|percentage\|user_segmented` filter. Returns summary fields only (`key`, `name`, `type`, `rules`). |
 | `POST` | `/flags` | JWT | Create a flag. Body is the full discriminated union — Zod validates `rules` shape against `type`. |
-| `GET` | `/flags/definitions` | JWT or API key | Return evaluation-only payloads for all flags (no metadata). SDK caching endpoint. Supports `?type=` filter and ETag/304. |
+| `GET` | `/flags/definitions` | JWT or API key | Return evaluation-only payloads for all flags (no metadata). SDK caching endpoint. Supports `?type=` filter, `?keys=` filter (comma-separated flag keys), and ETag/304. |
 | `GET` | `/flags/:key` | None | Get a single flag's full configuration. |
 | `GET` | `/flags/:key/definition` | JWT or API key | Return the evaluation-only payload for a single flag. SDK caching endpoint. Supports ETag/304. |
 | `PATCH` | `/flags/:key` | JWT | Update a flag's `rules` and/or metadata (`name`, `description`). Flag `type` is immutable — delete and recreate if the type must change. |
@@ -195,8 +195,17 @@ These endpoints exist to support **client-side evaluation** — the SDK fetches 
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| `GET` | `/flags/definitions` | JWT or API key | Return evaluation payloads for **all** flags. Supports `?type=` filter (same as `GET /flags`). |
+| `GET` | `/flags/definitions` | JWT or API key | Return evaluation payloads for **all** flags (or a specific subset). Supports `?type=` filter (same as `GET /flags`) and `?keys=` filter (comma-separated flag keys). |
 | `GET` | `/flags/:key/definition` | JWT or API key | Return the evaluation payload for a single flag by key. |
+
+#### Query parameters (`GET /flags/definitions`)
+
+| Parameter | Type | Description |
+|---|---|---|
+| `type` | `"boolean" \| "percentage" \| "user_segmented"` | Filter by flag type. |
+| `keys` | comma-separated string | Return only definitions for the listed flag keys (e.g. `?keys=flag-a,flag-b`). When combined with `type`, both filters apply. |
+
+When `keys` is provided, the response only contains definitions for the specified keys. Unknown keys are silently omitted (no 404). This allows a service to declare exactly which flags it cares about and receive a minimal, stable payload — both for bandwidth efficiency and to avoid cache churn from flags it doesn't use.
 
 #### Response shape
 
