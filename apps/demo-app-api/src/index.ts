@@ -10,9 +10,16 @@ async function start() {
   await flags.warm().catch((err: unknown) => {
     console.warn("[flags] Cache warm-up failed, will retry on first request:", err);
   });
-  app.listen(Number(PORT), () => {
+  const server = app.listen(Number(PORT), () => {
     console.log(`Demo API listening on http://localhost:${PORT}`);
   });
+
+  const shutdown = () => {
+    flags.disconnect();
+    server.close(() => process.exit(0));
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 
 start().catch(console.error);

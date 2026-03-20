@@ -8,5 +8,6 @@ const client = new FeatureFlagClient({
 export const flags = new CachedFlagEvaluator({
   client,
   flags: ["show-favorite-number", "extended-color-palette", "pro-number-range"] as const,
-  ttl: 30_000,
+  ttl: 300_000,
+  liveUpdates: true,
 });

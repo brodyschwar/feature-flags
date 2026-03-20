@@ -188,7 +188,7 @@ export class CachedFlagEvaluator<T extends string> {
 
     // When disconnect() aborts the signal, cancel the iterator so the
     // pending next() resolves immediately with done: true.
-    const abortHandler = () => { void iterator.return?.(); };
+    const abortHandler = () => { void iterator.return?.(undefined); };
     controller.signal.addEventListener("abort", abortHandler, { once: true });
 
     try {

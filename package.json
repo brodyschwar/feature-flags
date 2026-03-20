@@ -7,8 +7,11 @@
     "dev:demo-api": "pnpm --filter demo-app-api dev",
     "dev:demo-web": "pnpm --filter demo-app-web dev",
     "test:api": "pnpm --filter api test",
+    "build:flag-evaluation": "pnpm --filter @feature-flags/flag-evaluation build",
+    "test:flag-evaluation": "pnpm --filter @feature-flags/flag-evaluation test",
     "build:sdk": "pnpm --filter @feature-flags/ts-sdk build",
     "test:sdk": "pnpm --filter @feature-flags/ts-sdk test",
+    "build:packages": "pnpm run build:flag-evaluation && pnpm run build:sdk",
     "dev": "pnpm run dev:web & pnpm run dev:api"
   }
 }
