@@ -14,6 +14,12 @@ import {
 } from '../../schemas/flag.schema.js';
 import { evaluate, type FlagDefinition } from '@feature-flags/flag-evaluation';
 import { computeEtag } from '../../utils/etag.js';
+import {
+  registerClient,
+  removeClient,
+  notifyFlagUpdated,
+  notifyFlagDeleted,
+} from './sseRegistry.js';
 
 export const flagsRouter = Router();
 
@@ -45,6 +51,7 @@ flagsRouter.post('/', requireJwt, async (req, res) => {
 
   try {
     await getFlagsCollection().insertOne(doc as Parameters<ReturnType<typeof getFlagsCollection>['insertOne']>[0]);
+    notifyFlagUpdated({ key: body.key, type: body.type, rules: body.rules });
     res.status(201).json({ ...body, id, createdAt: now, updatedAt: now });
   } catch (err: unknown) {
     if (typeof err === 'object' && err !== null && 'code' in err && (err as { code: number }).code === 11000) {
@@ -77,6 +84,32 @@ flagsRouter.get('/definitions', requireJwtOrApiKey, async (req, res) => {
   }
   res.setHeader('ETag', etag);
   res.json({ flags });
+});
+
+// GET /flags/stream — SSE stream of flag change events.
+// Must be registered before /:key to prevent "stream" matching as a key parameter.
+flagsRouter.get('/stream', requireJwtOrApiKey, (req, res) => {
+  const keys: string[] = typeof req.query.keys === 'string'
+    ? req.query.keys.split(',').map(k => k.trim()).filter(Boolean)
+    : [];
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const client = registerClient(res, keys);
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ subscribedKeys: keys })}\n\n`);
+
+  const heartbeat = setInterval(() => {
+    res.write('event: heartbeat\ndata: {}\n\n');
+  }, 30_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removeClient(client);
+  });
 });
 
 // GET /flags/:key
@@ -144,6 +177,7 @@ flagsRouter.patch('/:key', requireJwt, async (req, res) => {
 
   await collection.updateOne({ key: req.params.key } as Parameters<typeof collection.updateOne>[0], { $set: updates });
   const updated = await collection.findOne({ key: req.params.key } as Parameters<typeof collection.findOne>[0]);
+  notifyFlagUpdated({ key: updated!.key, type: updated!.type, rules: updated!.rules } as FlagDefinition);
   res.json(docToFlag(updated!));
 });
 
@@ -155,6 +189,7 @@ flagsRouter.delete('/:key', requireJwt, async (req, res) => {
     res.status(404).json({ error: 'Flag not found' });
     return;
   }
+  notifyFlagDeleted(req.params.key);
   res.status(204).send();
 });
 

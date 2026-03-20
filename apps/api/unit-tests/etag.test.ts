@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeEtag } from './etag.js';
+import { computeEtag } from '../src/utils/etag.js';
 
 describe('computeEtag', () => {
   it('returns a quoted hex string', () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
-import { app } from '../../app.js';
-import { getFlagsCollection } from '../../db/collections.js';
+import { app } from '../src/app.js';
+import { getFlagsCollection } from '../src/db/collections.js';
 import '../../test/mongoSetup.js';
 
 vi.mock('../../middleware/requireJwtOrApiKey.js', () => ({
