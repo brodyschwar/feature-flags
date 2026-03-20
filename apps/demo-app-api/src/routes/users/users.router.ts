@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { WithId } from "mongodb";
-import { safeEvaluate } from "../../flags.js";
+import { flags } from "../../flags.js";
 import { findUserById, getUsersCollection, type User } from "../../models/user.model.js";
 
 export const usersRouter = Router();
@@ -83,7 +83,7 @@ usersRouter.get("/:id", async (req, res) => {
     return;
   }
 
-  const showFavoriteNumber = await safeEvaluate("show-favorite-number", true);
+  const showFavoriteNumber = await flags.safeEvaluate("show-favorite-number", true);
   res.json(toResponse(user, { showFavoriteNumber }));
 });
 
@@ -107,9 +107,9 @@ usersRouter.patch("/:id/preferences", async (req, res) => {
   const userId = user._id.toString();
 
   const [showFavoriteNumber, extendedPalette, proNumberRange] = await Promise.all([
-    safeEvaluate("show-favorite-number", true),
-    safeEvaluate("extended-color-palette", false, { userId }),
-    safeEvaluate("pro-number-range", false, { userId, attributes: { plan: effectivePlan } }),
+    flags.safeEvaluate("show-favorite-number", true),
+    flags.safeEvaluate("extended-color-palette", false, { userId }),
+    flags.safeEvaluate("pro-number-range", false, { userId, attributes: { plan: effectivePlan } }),
   ]);
 
   if (favoriteNumber !== undefined) {
@@ -155,9 +155,9 @@ usersRouter.get("/:id/options", async (req, res) => {
   const userId = user._id.toString();
 
   const [showFavoriteNumber, extendedPalette, proNumberRange] = await Promise.all([
-    safeEvaluate("show-favorite-number", true),
-    safeEvaluate("extended-color-palette", false, { userId }),
-    safeEvaluate("pro-number-range", false, { userId, attributes: { plan: user.plan } }),
+    flags.safeEvaluate("show-favorite-number", true),
+    flags.safeEvaluate("extended-color-palette", false, { userId }),
+    flags.safeEvaluate("pro-number-range", false, { userId, attributes: { plan: user.plan } }),
   ]);
 
   const max = proNumberRange ? 100 : user.plan === "basic" ? 50 : 10;

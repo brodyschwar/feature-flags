@@ -45,6 +45,21 @@ export class FeatureFlagClient {
   }
 
   /**
+   * Evaluate a flag, returning `defaultValue` instead of throwing on any error
+   * (flag not found, API unreachable, non-2xx response, etc.).
+   *
+   * Prefer this over evaluate() in production route handlers where a flag
+   * outage should degrade gracefully rather than surface as a 5xx.
+   */
+  async safeEvaluate(
+    flagKey: string,
+    defaultValue: boolean,
+    context?: EvaluationContext
+  ): Promise<boolean> {
+    return this.evaluate(flagKey, context).catch(() => defaultValue);
+  }
+
+  /**
    * Fetch evaluation-only payloads for all flags.
    *
    * Returns `{ flags, etag }` on 200 OK.

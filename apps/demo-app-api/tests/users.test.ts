@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { app } from "../src/app.js";
-import { safeEvaluate } from "../src/flags.js";
+import { flags } from "../src/flags.js";
 import { getUsersCollection } from "../src/models/user.model.js";
 
 // Mock the flags module — flag logic is tested in packages/ts-sdk.
 // Tests here only verify that the API correctly gates behaviour on the result.
 vi.mock("../src/flags.js", () => ({
-  flags: { evaluate: vi.fn() },
-  safeEvaluate: vi.fn(),
+  flags: { safeEvaluate: vi.fn() },
 }));
 
 // Default flag state: all features on, basic palette, restricted number range.
@@ -21,7 +20,7 @@ function setFlags({
   extendedPalette?: boolean;
   proNumberRange?: boolean;
 } = {}) {
-  vi.mocked(safeEvaluate).mockImplementation(async (key) => {
+  vi.mocked(flags.safeEvaluate).mockImplementation(async (key) => {
     if (key === "show-favorite-number") return showFavoriteNumber;
     if (key === "extended-color-palette") return extendedPalette;
     if (key === "pro-number-range") return proNumberRange;

@@ -78,6 +78,21 @@ export class CachedFlagEvaluator {
   }
 
   /**
+   * Evaluate a flag, returning `defaultValue` instead of throwing on any error
+   * (flag not found, flags API unreachable, etc.).
+   *
+   * Prefer this over evaluate() in production route handlers where a flag
+   * outage should degrade gracefully rather than surface as a 5xx.
+   */
+  async safeEvaluate(
+    flagKey: string,
+    defaultValue: boolean,
+    context?: EvaluationContext
+  ): Promise<boolean> {
+    return this.evaluate(flagKey, context).catch(() => defaultValue);
+  }
+
+  /**
    * Pre-populate the cache with all flag definitions.
    * Call once at startup to eliminate cold-start latency on the first evaluate().
    */

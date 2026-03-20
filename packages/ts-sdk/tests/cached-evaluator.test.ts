@@ -356,6 +356,39 @@ describe("cache miss fallback to getDefinition()", () => {
   });
 });
 
+// ── safeEvaluate() ────────────────────────────────────────────────
+
+describe("safeEvaluate()", () => {
+  it("returns the flag value when evaluation succeeds", async () => {
+    const client = makeClient([boolFlag]);
+    const evaluator = new CachedFlagEvaluator({ client });
+
+    expect(await evaluator.safeEvaluate("bool-flag", false)).toBe(true);
+  });
+
+  it("returns defaultValue when the flag does not exist", async () => {
+    const client = makeClient([]); // empty — "missing-flag" not in cache
+    // getDefinition falls back and rejects with 404
+    (client.getDefinition as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new FeatureFlagError("Flag not found", 404)
+    );
+    const evaluator = new CachedFlagEvaluator({ client });
+
+    expect(await evaluator.safeEvaluate("missing-flag", true)).toBe(true);
+    expect(await evaluator.safeEvaluate("missing-flag", false)).toBe(false);
+  });
+
+  it("returns defaultValue when the flags API is unreachable", async () => {
+    const client = {
+      getDefinitions: vi.fn().mockRejectedValue(new FeatureFlagError("ECONNREFUSED")),
+      getDefinition: vi.fn(),
+    } as unknown as FeatureFlagClient;
+    const evaluator = new CachedFlagEvaluator({ client });
+
+    expect(await evaluator.safeEvaluate("bool-flag", true)).toBe(true);
+  });
+});
+
 // ── warm() ────────────────────────────────────────────────────────
 
 describe("warm()", () => {

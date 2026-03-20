@@ -74,6 +74,36 @@ describe("FeatureFlagClient.evaluate", () => {
   });
 });
 
+describe("FeatureFlagClient.safeEvaluate", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("returns the flag value when evaluation succeeds", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ key: "my-flag", result: true }),
+    });
+
+    expect(await makeClient().safeEvaluate("my-flag", false)).toBe(true);
+  });
+
+  it("returns defaultValue on non-2xx response", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "Flag not found" }),
+    });
+
+    expect(await makeClient().safeEvaluate("missing-flag", true)).toBe(true);
+    expect(await makeClient().safeEvaluate("missing-flag", false)).toBe(false);
+  });
+
+  it("returns defaultValue on network failure", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+
+    expect(await makeClient().safeEvaluate("my-flag", true)).toBe(true);
+  });
+});
+
 // ── FeatureFlagClient.getDefinitions ─────────────────────────────
 
 const stubFlag: FlagDefinition = { key: "bool-flag", type: "boolean", rules: { enabled: true } };
