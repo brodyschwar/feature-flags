@@ -108,7 +108,7 @@ usersRouter.patch("/:id/preferences", async (req, res) => {
 
   const [showFavoriteNumber, extendedPalette, proNumberRange] = await Promise.all([
     flags.safeEvaluate("show-favorite-number", true),
-    flags.safeEvaluate("extended-color-palette", false, { userId }),
+    flags.safeEvaluate("extended-color-palette", false, { userId, attributes: { plan: effectivePlan } }),
     flags.safeEvaluate("pro-number-range", false, { userId, attributes: { plan: effectivePlan } }),
   ]);
 
