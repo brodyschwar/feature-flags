@@ -33,6 +33,14 @@ export interface CachedFlagEvaluatorOptions<T extends string> {
    * Use false when evaluation accuracy is critical.
    */
   staleWhileRevalidate?: boolean;
+  /**
+   * When true, opens a persistent SSE connection to GET /flags/stream and
+   * updates the cache immediately when the API pushes a flag_updated or
+   * flag_deleted event. TTL polling continues to run as a backstop.
+   *
+   * Default: false.
+   */
+  liveUpdates?: boolean;
 }
 
 const DEFAULT_TTL = 30_000;
@@ -43,16 +51,22 @@ export class CachedFlagEvaluator<T extends string> {
   private readonly ttl: number;
   private readonly staleWhileRevalidate: boolean;
 
+  private readonly liveUpdates: boolean;
+
   private cache: Map<string, FlagDefinition> = new Map();
   private etag: string | null = null;
   private fetchedAt: number | null = null;
   private inflightRefresh: Promise<void> | null = null;
+  private abortController: AbortController | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelay: number = 1_000;
 
   constructor(options: CachedFlagEvaluatorOptions<T>) {
     this.client = options.client;
     this.flagKeys = options.flags;
     this.ttl = options.ttl ?? DEFAULT_TTL;
     this.staleWhileRevalidate = options.staleWhileRevalidate ?? false;
+    this.liveUpdates = options.liveUpdates ?? false;
   }
 
   /**
@@ -112,9 +126,40 @@ export class CachedFlagEvaluator<T extends string> {
   /**
    * Pre-populate the cache with all flag definitions.
    * Call once at startup to eliminate cold-start latency on the first evaluate().
+   * When `liveUpdates` is true, also opens the SSE connection after the cache is populated.
    */
   async warm(): Promise<void> {
     await this.refresh();
+    if (this.liveUpdates) {
+      this.connect();
+    }
+  }
+
+  /**
+   * Open the SSE connection to receive live flag updates.
+   * Idempotent — calling while already connected or in a reconnect cycle is a no-op.
+   */
+  connect(): void {
+    if (this.abortController !== null) return;
+    this.abortController = new AbortController();
+    void this.startStream();
+  }
+
+  /**
+   * Close the SSE connection and cancel any pending reconnect timer.
+   * The cache is preserved; the evaluator falls back to TTL polling.
+   * Safe to call when not connected.
+   */
+  disconnect(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.abortController !== null) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    this.reconnectDelay = 1_000;
   }
 
   /**
@@ -129,6 +174,68 @@ export class CachedFlagEvaluator<T extends string> {
       this.inflightRefresh = null;
     });
     return this.inflightRefresh;
+  }
+
+  private async startStream(): Promise<void> {
+    const controller = this.abortController;
+    if (!controller) return;
+
+    // Obtain the iterator directly so we can call return() on abort.
+    const iterator = this.client.streamDefinitions({
+      keys: [...this.flagKeys],
+      signal: controller.signal,
+    })[Symbol.asyncIterator]();
+
+    // When disconnect() aborts the signal, cancel the iterator so the
+    // pending next() resolves immediately with done: true.
+    const abortHandler = () => { void iterator.return?.(); };
+    controller.signal.addEventListener("abort", abortHandler, { once: true });
+
+    try {
+      let result: IteratorResult<import("./types.js").FlagStreamEvent>;
+      while (!(result = await iterator.next()).done) {
+        const event = result.value;
+        if (event.type === "flag_updated") {
+          this.cache.set(event.definition.key, event.definition);
+          this.fetchedAt = Date.now();
+        } else if (event.type === "flag_deleted") {
+          this.cache.delete(event.key);
+        }
+        // heartbeat: no-op
+      }
+    } catch {
+      // Connection error — handled below.
+    } finally {
+      controller.signal.removeEventListener("abort", abortHandler);
+    }
+
+    // If the stream ended and we haven't been intentionally disconnected,
+    // schedule a reconnect.
+    if (this.abortController !== null && !controller.signal.aborted) {
+      this.scheduleReconnect();
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.abortController === null) return;
+
+    const delay = this.reconnectDelay;
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      if (this.abortController === null) return;
+
+      // Refresh to fill any gap missed during the disconnect.
+      try { await this.refresh(); } catch { /* best effort */ }
+
+      if (this.abortController === null) return;
+
+      // Reset backoff on successful reconnect and start a new stream.
+      this.reconnectDelay = 1_000;
+      this.abortController = new AbortController();
+      void this.startStream();
+    }, delay);
   }
 
   private isStale(): boolean {

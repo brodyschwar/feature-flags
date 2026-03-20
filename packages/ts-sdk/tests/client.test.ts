@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FeatureFlagClient } from "../src/client.js";
 import { FeatureFlagError } from "../src/types.js";
+import type { FlagStreamEvent } from "../src/types.js";
 import type { FlagDefinition } from "@feature-flags/flag-evaluation";
 
 const BASE_URL = "http://localhost:3001";
@@ -284,5 +285,144 @@ describe("FeatureFlagClient.getDefinition", () => {
       status: 404,
       message: "Flag not found",
     });
+  });
+});
+
+// ── FeatureFlagClient.streamDefinitions ──────────────────────────
+
+const flagDef: FlagDefinition = { key: "flag-a", type: "boolean", rules: { enabled: true } };
+
+function makeSSEStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+}
+
+function sseMessage(eventType: string, data: unknown) {
+  return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+async function collectEvents(client: FeatureFlagClient, signal?: AbortSignal): Promise<FlagStreamEvent[]> {
+  const events: FlagStreamEvent[] = [];
+  for await (const event of client.streamDefinitions({ signal })) {
+    events.push(event);
+  }
+  return events;
+}
+
+describe("FeatureFlagClient.streamDefinitions", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("yields flag_updated events", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([sseMessage("flag_updated", flagDef)]),
+    });
+
+    const events = await collectEvents(makeClient());
+    expect(events).toEqual([{ type: "flag_updated", definition: flagDef }]);
+  });
+
+  it("yields flag_deleted events", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([sseMessage("flag_deleted", { key: "flag-a" })]),
+    });
+
+    const events = await collectEvents(makeClient());
+    expect(events).toEqual([{ type: "flag_deleted", key: "flag-a" }]);
+  });
+
+  it("yields heartbeat events", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([sseMessage("heartbeat", {})]),
+    });
+
+    const events = await collectEvents(makeClient());
+    expect(events).toEqual([{ type: "heartbeat" }]);
+  });
+
+  it("yields multiple events from a single stream", async () => {
+    const updatedDef = { ...flagDef, rules: { enabled: false } };
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([
+        sseMessage("flag_updated", flagDef),
+        sseMessage("heartbeat", {}),
+        sseMessage("flag_deleted", { key: "flag-a" }),
+        sseMessage("flag_updated", updatedDef),
+      ]),
+    });
+
+    const events = await collectEvents(makeClient());
+    expect(events).toHaveLength(4);
+    expect(events[0]).toEqual({ type: "flag_updated", definition: flagDef });
+    expect(events[1]).toEqual({ type: "heartbeat" });
+    expect(events[2]).toEqual({ type: "flag_deleted", key: "flag-a" });
+    expect(events[3]).toEqual({ type: "flag_updated", definition: updatedDef });
+  });
+
+  it("yields events split across multiple chunks", async () => {
+    const msg = sseMessage("flag_updated", flagDef);
+    const mid = Math.floor(msg.length / 2);
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([msg.slice(0, mid), msg.slice(mid)]),
+    });
+
+    const events = await collectEvents(makeClient());
+    expect(events).toEqual([{ type: "flag_updated", definition: flagDef }]);
+  });
+
+  it("sends Authorization and Accept headers", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([]),
+    });
+
+    await collectEvents(makeClient());
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(init.headers["Authorization"]).toBe("Bearer ff_test");
+    expect(init.headers["Accept"]).toBe("text/event-stream");
+  });
+
+  it("appends ?keys= query param when keys are provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeSSEStream([]),
+    });
+
+    for await (const _ of makeClient().streamDefinitions({ keys: ["flag-a", "flag-b"] })) { /* drain */ }
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("keys=flag-a%2Cflag-b");
+  });
+
+  it("throws FeatureFlagError on non-2xx initial response", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 401,
+      json: async () => ({ error: "Unauthorized" }),
+    });
+
+    const gen = makeClient().streamDefinitions();
+    await expect(gen.next()).rejects.toMatchObject({
+      name: "FeatureFlagError",
+      status: 401,
+      message: "Unauthorized",
+    });
+  });
+
+  it("ends the iterable cleanly when the signal is aborted before the stream starts", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    global.fetch = vi.fn().mockRejectedValue(Object.assign(new Error("AbortError"), { name: "AbortError" }));
+
+    const events = await collectEvents(makeClient(), abortController.signal);
+    expect(events).toHaveLength(0);
   });
 });
