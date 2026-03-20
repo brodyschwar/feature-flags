@@ -62,6 +62,10 @@ flagsRouter.get('/definitions', requireJwtOrApiKey, async (req, res) => {
   if (typeof req.query.type === 'string') {
     filter.type = req.query.type;
   }
+  if (typeof req.query.keys === 'string') {
+    const keys = req.query.keys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length > 0) filter.key = { $in: keys };
+  }
   // Sort by key for a deterministic ETag regardless of insertion order.
   const docs = await getFlagsCollection().find(filter).sort({ key: 1 }).toArray();
   const flags = docs.map(doc => ({ key: doc.key, type: doc.type, rules: doc.rules })) as FlagDefinition[];

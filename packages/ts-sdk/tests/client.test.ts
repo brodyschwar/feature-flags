@@ -169,6 +169,22 @@ describe("FeatureFlagClient.getDefinitions", () => {
     expect(url).toContain("?type=boolean");
   });
 
+  it("appends ?keys= query param when keys are provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue(makeDefinitionsResponse([]));
+
+    await makeClient().getDefinitions({ keys: ["flag-a", "flag-b"] });
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("keys=flag-a%2Cflag-b");
+  });
+
+  it("does not append ?keys= when keys is not provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue(makeDefinitionsResponse([]));
+
+    await makeClient().getDefinitions();
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).not.toContain("keys=");
+  });
+
   it("throws FeatureFlagError with status on non-2xx", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false, status: 500,

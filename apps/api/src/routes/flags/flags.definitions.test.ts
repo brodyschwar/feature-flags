@@ -138,6 +138,47 @@ describe('GET /flags/definitions', () => {
     expect(res.body.flags[0].type).toBe('user_segmented');
   });
 
+  it('filters by ?keys= returning only the requested flags', async () => {
+    await insert(boolFlag);
+    await insert(pctFlag);
+    await insert(segFlag);
+    const res = await request(app).get('/flags/definitions?keys=bool-flag,seg-flag');
+    expect(res.status).toBe(200);
+    expect(res.body.flags).toHaveLength(2);
+    const keys = res.body.flags.map((f: { key: string }) => f.key);
+    expect(keys).toContain('bool-flag');
+    expect(keys).toContain('seg-flag');
+    expect(keys).not.toContain('pct-flag');
+  });
+
+  it('filters by ?keys= with a single key', async () => {
+    await insert(boolFlag);
+    await insert(pctFlag);
+    const res = await request(app).get('/flags/definitions?keys=pct-flag');
+    expect(res.status).toBe(200);
+    expect(res.body.flags).toHaveLength(1);
+    expect(res.body.flags[0].key).toBe('pct-flag');
+  });
+
+  it('silently omits unknown keys from ?keys= filter', async () => {
+    await insert(boolFlag);
+    const res = await request(app).get('/flags/definitions?keys=bool-flag,does-not-exist');
+    expect(res.status).toBe(200);
+    expect(res.body.flags).toHaveLength(1);
+    expect(res.body.flags[0].key).toBe('bool-flag');
+  });
+
+  it('combines ?keys= and ?type= filters', async () => {
+    await insert(boolFlag);
+    await insert(pctFlag);
+    await insert(segFlag);
+    // Request both bool-flag and pct-flag but also filter by type=boolean
+    const res = await request(app).get('/flags/definitions?keys=bool-flag,pct-flag&type=boolean');
+    expect(res.status).toBe(200);
+    expect(res.body.flags).toHaveLength(1);
+    expect(res.body.flags[0].key).toBe('bool-flag');
+  });
+
   it('returns an ETag header in quoted-string format', async () => {
     await insert(boolFlag);
     const res = await request(app).get('/flags/definitions');

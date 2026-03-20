@@ -58,7 +58,7 @@ afterEach(() => {
 describe("cold cache", () => {
   it("fetches definitions on first evaluate()", async () => {
     const client = makeClient([boolFlag]);
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const });
 
     const result = await evaluator.evaluate("bool-flag");
 
@@ -69,7 +69,7 @@ describe("cold cache", () => {
   it("evaluates locally — does not call the /evaluate endpoint", async () => {
     // pctFlag at 100% → always true for any userId
     const client = makeClient([pctFlag]);
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["pct-flag"] as const });
 
     const result = await evaluator.evaluate("pct-flag", { userId: "user-1" });
 
@@ -84,7 +84,7 @@ describe("cold cache", () => {
 describe("warm cache within TTL", () => {
   it("does not call getDefinitions() again while cache is fresh", async () => {
     const client = makeClient([boolFlag]);
-    const evaluator = new CachedFlagEvaluator({ client, ttl: 30_000 });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const, ttl: 30_000 });
 
     await evaluator.evaluate("bool-flag");
     await evaluator.evaluate("bool-flag");
@@ -100,7 +100,7 @@ describe("stale cache — blocking mode", () => {
   it("awaits a fresh fetch before returning when TTL has expired", async () => {
     vi.useFakeTimers();
     const client = makeClient([boolFlag]);
-    const evaluator = new CachedFlagEvaluator({ client, ttl: 1_000 });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const, ttl: 1_000 });
 
     await evaluator.evaluate("bool-flag");
     expect(client.getDefinitions).toHaveBeenCalledTimes(1);
@@ -125,7 +125,7 @@ describe("stale cache — blocking mode", () => {
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client, ttl: 1_000 });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const, ttl: 1_000 });
 
     expect(await evaluator.evaluate("bool-flag")).toBe(true);
     vi.advanceTimersByTime(1_001);
@@ -152,6 +152,7 @@ describe("stale cache — staleWhileRevalidate mode", () => {
 
     const evaluator = new CachedFlagEvaluator({
       client,
+      flags: ["bool-flag"] as const,
       ttl: 1_000,
       staleWhileRevalidate: true,
     });
@@ -175,6 +176,7 @@ describe("stale cache — staleWhileRevalidate mode", () => {
     const client = makeClient([boolFlag]);
     const evaluator = new CachedFlagEvaluator({
       client,
+      flags: ["bool-flag"] as const,
       ttl: 30_000,
       staleWhileRevalidate: true,
     });
@@ -198,7 +200,7 @@ describe("304 Not Modified on refresh", () => {
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client, ttl: 1_000 });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const, ttl: 1_000 });
     await evaluator.warm();
 
     vi.advanceTimersByTime(1_001);
@@ -209,7 +211,7 @@ describe("304 Not Modified on refresh", () => {
     expect(client.getDefinitions).toHaveBeenCalledTimes(2);
   });
 
-  it("sends the stored ETag as If-None-Match on subsequent refreshes", async () => {
+  it("sends the stored ETag and keys as If-None-Match on subsequent refreshes", async () => {
     vi.useFakeTimers();
     const client = {
       getDefinitions: vi.fn()
@@ -218,12 +220,13 @@ describe("304 Not Modified on refresh", () => {
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client, ttl: 1_000 });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const, ttl: 1_000 });
     await evaluator.warm();
     vi.advanceTimersByTime(1_001);
     await evaluator.evaluate("bool-flag");
 
     expect(client.getDefinitions).toHaveBeenLastCalledWith({
+      keys: ["bool-flag"],
       ifNoneMatch: '"abc123"',
     });
   });
@@ -237,7 +240,7 @@ describe("304 Not Modified on refresh", () => {
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client, ttl: 1_000 });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const, ttl: 1_000 });
     await evaluator.warm();
     vi.advanceTimersByTime(1_001);
     await evaluator.evaluate("bool-flag"); // triggers refresh (304)
@@ -258,7 +261,7 @@ describe("single-flight coalescing", () => {
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const });
 
     // All three start before the fetch resolves
     const p1 = evaluator.evaluate("bool-flag");
@@ -282,7 +285,7 @@ describe("single-flight coalescing", () => {
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const });
 
     const r1 = evaluator.refresh();
     const r2 = evaluator.refresh();
@@ -312,7 +315,7 @@ describe("cache miss fallback to getDefinition()", () => {
       getDefinition: vi.fn().mockResolvedValue({ flag: otherFlag, etag: '"v2"' }),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag", "other-flag"] as const });
     await evaluator.warm();
 
     const result = await evaluator.evaluate("other-flag");
@@ -332,7 +335,7 @@ describe("cache miss fallback to getDefinition()", () => {
       getDefinition: vi.fn().mockResolvedValue({ flag: otherFlag, etag: '"v2"' }),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["other-flag"] as const });
     await evaluator.evaluate("other-flag"); // miss → fetches
     await evaluator.evaluate("other-flag"); // hit → no second call
 
@@ -347,7 +350,7 @@ describe("cache miss fallback to getDefinition()", () => {
       ),
     } as unknown as FeatureFlagClient;
 
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["missing-flag"] as const });
 
     await expect(evaluator.evaluate("missing-flag")).rejects.toMatchObject({
       name: "FeatureFlagError",
@@ -361,7 +364,7 @@ describe("cache miss fallback to getDefinition()", () => {
 describe("safeEvaluate()", () => {
   it("returns the flag value when evaluation succeeds", async () => {
     const client = makeClient([boolFlag]);
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const });
 
     expect(await evaluator.safeEvaluate("bool-flag", false)).toBe(true);
   });
@@ -372,7 +375,7 @@ describe("safeEvaluate()", () => {
     (client.getDefinition as ReturnType<typeof vi.fn>).mockRejectedValue(
       new FeatureFlagError("Flag not found", 404)
     );
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["missing-flag"] as const });
 
     expect(await evaluator.safeEvaluate("missing-flag", true)).toBe(true);
     expect(await evaluator.safeEvaluate("missing-flag", false)).toBe(false);
@@ -383,7 +386,7 @@ describe("safeEvaluate()", () => {
       getDefinitions: vi.fn().mockRejectedValue(new FeatureFlagError("ECONNREFUSED")),
       getDefinition: vi.fn(),
     } as unknown as FeatureFlagClient;
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag"] as const });
 
     expect(await evaluator.safeEvaluate("bool-flag", true)).toBe(true);
   });
@@ -394,7 +397,7 @@ describe("safeEvaluate()", () => {
 describe("warm()", () => {
   it("pre-populates the cache so subsequent evaluate() calls need no fetch", async () => {
     const client = makeClient([boolFlag, pctFlag]);
-    const evaluator = new CachedFlagEvaluator({ client });
+    const evaluator = new CachedFlagEvaluator({ client, flags: ["bool-flag", "pct-flag"] as const });
 
     await evaluator.warm();
     expect(client.getDefinitions).toHaveBeenCalledTimes(1);
@@ -403,5 +406,20 @@ describe("warm()", () => {
     await evaluator.evaluate("pct-flag", { userId: "u" });
 
     expect(client.getDefinitions).toHaveBeenCalledTimes(1); // no additional fetches
+  });
+
+  it("calls getDefinitions with the configured flag keys", async () => {
+    const client = makeClient([boolFlag, pctFlag]);
+    const evaluator = new CachedFlagEvaluator({
+      client,
+      flags: ["bool-flag", "pct-flag"] as const,
+    });
+
+    await evaluator.warm();
+
+    expect(client.getDefinitions).toHaveBeenCalledWith({
+      keys: ["bool-flag", "pct-flag"],
+      ifNoneMatch: undefined,
+    });
   });
 });

@@ -4,9 +4,21 @@ import type { FeatureFlagClient } from "./client.js";
 import type { EvaluationContext } from "./types.js";
 import { FeatureFlagError } from "./types.js";
 
-export interface CachedFlagEvaluatorOptions {
+export interface CachedFlagEvaluatorOptions<T extends string> {
   /** The HTTP client used to fetch flag definitions. */
   client: FeatureFlagClient;
+  /**
+   * The flag keys this service uses. Serves dual purpose:
+   *
+   * - **Runtime:** sent as `?keys=...` to `GET /flags/definitions`, so only
+   *   the relevant flag definitions are fetched and cached.
+   * - **Compile time:** with `as const`, TypeScript infers the literal union
+   *   type `T` and constrains `evaluate()` to only accept those keys.
+   *
+   * Pass `as const` to get literal-type inference:
+   *   flags: ["flag-a", "flag-b"] as const
+   */
+  flags: readonly T[];
   /**
    * How long (ms) cached definitions are considered fresh before a refresh
    * is triggered. Default: 30_000 (30 seconds).
@@ -25,8 +37,9 @@ export interface CachedFlagEvaluatorOptions {
 
 const DEFAULT_TTL = 30_000;
 
-export class CachedFlagEvaluator {
+export class CachedFlagEvaluator<T extends string> {
   private readonly client: FeatureFlagClient;
+  private readonly flagKeys: readonly T[];
   private readonly ttl: number;
   private readonly staleWhileRevalidate: boolean;
 
@@ -35,8 +48,9 @@ export class CachedFlagEvaluator {
   private fetchedAt: number | null = null;
   private inflightRefresh: Promise<void> | null = null;
 
-  constructor(options: CachedFlagEvaluatorOptions) {
+  constructor(options: CachedFlagEvaluatorOptions<T>) {
     this.client = options.client;
+    this.flagKeys = options.flags;
     this.ttl = options.ttl ?? DEFAULT_TTL;
     this.staleWhileRevalidate = options.staleWhileRevalidate ?? false;
   }
@@ -44,13 +58,16 @@ export class CachedFlagEvaluator {
   /**
    * Evaluate a flag locally using the cached definition.
    *
-   * - Cold cache: fetches all definitions before evaluating.
+   * `flagKey` is constrained to the union `T` — passing a key not in the
+   * `flags` constructor option is a compile-time error.
+   *
+   * - Cold cache: fetches definitions for the configured keys before evaluating.
    * - Stale cache + default mode: awaits a refresh before evaluating.
    * - Stale cache + staleWhileRevalidate: returns the cached value immediately
    *   and triggers a background refresh for subsequent calls.
    * - Cache miss after bulk refresh: falls back to fetching the single flag.
    */
-  async evaluate(flagKey: string, context?: EvaluationContext): Promise<boolean> {
+  async evaluate(flagKey: T, context?: EvaluationContext): Promise<boolean> {
     if (this.isStale()) {
       if (this.staleWhileRevalidate && this.fetchedAt !== null) {
         // Cache is warm but stale — serve immediately, refresh in background.
@@ -85,7 +102,7 @@ export class CachedFlagEvaluator {
    * outage should degrade gracefully rather than surface as a 5xx.
    */
   async safeEvaluate(
-    flagKey: string,
+    flagKey: T,
     defaultValue: boolean,
     context?: EvaluationContext
   ): Promise<boolean> {
@@ -121,6 +138,7 @@ export class CachedFlagEvaluator {
 
   private async doRefresh(): Promise<void> {
     const result = await this.client.getDefinitions({
+      keys: [...this.flagKeys],
       ifNoneMatch: this.etag ?? undefined,
     });
 

@@ -68,10 +68,12 @@ export class FeatureFlagClient {
    */
   async getDefinitions(opts?: {
     type?: "boolean" | "percentage" | "user_segmented";
+    keys?: string[];
     ifNoneMatch?: string;
   }): Promise<{ flags: FlagDefinition[]; etag: string } | null> {
     const url = new URL(`${this.baseUrl}/flags/definitions`);
     if (opts?.type) url.searchParams.set("type", opts.type);
+    if (opts?.keys?.length) url.searchParams.set("keys", opts.keys.join(","));
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
