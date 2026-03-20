@@ -2,7 +2,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { app } from "../src/app.js";
 import { flags } from "../src/flags.js";
+import { getFavoriteNumberMax } from "../src/routes/users/users.router.js";
 import { getUsersCollection } from "../src/models/user.model.js";
+
+// ── getFavoriteNumberMax ──────────────────────────────────────────
+
+describe("getFavoriteNumberMax", () => {
+  it("free plan always returns 10 regardless of proNumberRange", () => {
+    expect(getFavoriteNumberMax("free", false)).toBe(10);
+    expect(getFavoriteNumberMax("free", true)).toBe(10);
+  });
+
+  it("basic plan always returns 50 regardless of proNumberRange", () => {
+    expect(getFavoriteNumberMax("basic", false)).toBe(50);
+    expect(getFavoriteNumberMax("basic", true)).toBe(50);
+  });
+
+  it("pro plan returns 100 when proNumberRange is true", () => {
+    expect(getFavoriteNumberMax("pro", true)).toBe(100);
+  });
+
+  it("pro plan returns 80 when proNumberRange is false", () => {
+    expect(getFavoriteNumberMax("pro", false)).toBe(80);
+  });
+});
 
 // Mock the flags module — flag logic is tested in packages/ts-sdk.
 // Tests here only verify that the API correctly gates behaviour on the result.
@@ -153,9 +176,10 @@ describe("PATCH /users/:id/preferences", () => {
     expect(res.status).toBe(400);
   });
 
-  it("allows favoriteNumber up to 100 when pro-number-range flag is true", async () => {
+  it("allows favoriteNumber up to 100 when pro plan and pro-number-range flag is true", async () => {
     setFlags({ showFavoriteNumber: true, proNumberRange: true });
     const id = await createUser();
+    await request(app).patch(`/users/${id}/preferences`).send({ plan: "pro" });
     const res = await request(app).patch(`/users/${id}/preferences`).send({ favoriteNumber: 99 });
     expect(res.status).toBe(200);
     expect(res.body.favoriteNumber).toBe(99);
@@ -227,11 +251,18 @@ describe("GET /users/:id/options", () => {
     expect(res.body.favoriteNumberRange).toEqual({ min: 0, max: 50 });
   });
 
-  it("returns max: 100 when pro-number-range flag is true", async () => {
+  it("returns max: 100 for pro plan when pro-number-range flag is true", async () => {
     setFlags({ showFavoriteNumber: true, proNumberRange: true });
-    const id = await createUser();
+    const id = await createUser("pro-user", "pro");
     const res = await request(app).get(`/users/${id}/options`);
     expect(res.body.favoriteNumberRange).toEqual({ min: 0, max: 100 });
+  });
+
+  it("returns max: 80 for pro plan when pro-number-range flag is false", async () => {
+    setFlags({ showFavoriteNumber: true, proNumberRange: false });
+    const id = await createUser("pro-user2", "pro");
+    const res = await request(app).get(`/users/${id}/options`);
+    expect(res.body.favoriteNumberRange).toEqual({ min: 0, max: 80 });
   });
 
   it("returns the basic color palette when extended-color-palette flag is off", async () => {

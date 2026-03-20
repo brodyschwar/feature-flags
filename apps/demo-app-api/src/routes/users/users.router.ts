@@ -6,6 +6,23 @@ import { findUserById, getUsersCollection, type User } from "../../models/user.m
 
 export const usersRouter = Router();
 
+function assertNever(x: never): never {
+  throw new Error(`Unhandled plan: ${String(x)}`);
+}
+
+/**
+ * Returns the maximum allowed favorite number for a user given their plan and
+ * whether the pro-number-range flag is enabled for them.
+ */
+export function getFavoriteNumberMax(plan: User["plan"], proNumberRange: boolean): number {
+  switch (plan) {
+    case "free":  return 10;
+    case "basic": return 50;
+    case "pro":   return proNumberRange ? 100 : 80;
+    default:      return assertNever(plan);
+  }
+}
+
 const BASIC_COLORS = ["red", "blue", "green", "yellow", "purple"];
 const EXTENDED_COLORS = [
   ...BASIC_COLORS,
@@ -117,7 +134,7 @@ usersRouter.patch("/:id/preferences", async (req, res) => {
       res.status(400).json({ error: "Favorite number is not currently available" });
       return;
     }
-    const max = proNumberRange ? 100 : effectivePlan === "basic" ? 50 : 10;
+    const max = getFavoriteNumberMax(effectivePlan, proNumberRange);
     if (favoriteNumber > max) {
       res.status(400).json({ error: `Favorite number must be between 0 and ${max} for your plan` });
       return;
@@ -156,11 +173,11 @@ usersRouter.get("/:id/options", async (req, res) => {
 
   const [showFavoriteNumber, extendedPalette, proNumberRange] = await Promise.all([
     flags.safeEvaluate("show-favorite-number", true),
-    flags.safeEvaluate("extended-color-palette", false, { userId }),
-    flags.safeEvaluate("pro-number-range", false, { userId, attributes: { plan: user.plan } }),
+    flags.safeEvaluate("extended-color-palette", false, { userId, attributes: { plan: user.plan } }),
+    flags.safeEvaluate("pro-number-range", false, { userId }),
   ]);
 
-  const max = proNumberRange ? 100 : user.plan === "basic" ? 50 : 10;
+  const max = getFavoriteNumberMax(user.plan, proNumberRange);
 
   res.json({
     favoriteNumberEnabled: showFavoriteNumber,
