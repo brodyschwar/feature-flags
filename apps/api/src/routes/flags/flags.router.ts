@@ -11,9 +11,8 @@ import {
   PercentageRulesSchema,
   UserSegmentedRulesSchema,
   type Flag,
-  type FlagDefinition,
 } from '../../schemas/flag.schema.js';
-import { evaluate } from '../../evaluation/evaluate.js';
+import { evaluate, type FlagDefinition } from '@feature-flags/flag-evaluation';
 import { computeEtag } from '../../utils/etag.js';
 
 export const flagsRouter = Router();

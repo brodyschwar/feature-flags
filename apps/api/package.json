@@ -10,6 +10,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@feature-flags/flag-evaluation": "workspace:*",
     "express": "^5.2.1",
     "jose": "^5.10.0",
     "mongodb": "^6.15.0",

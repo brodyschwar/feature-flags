@@ -68,16 +68,6 @@ export const UpdateFlagBodySchema = z.object({
   rules: z.union([BooleanRulesSchema, PercentageRulesSchema, UserSegmentedRulesSchema]).optional(),
 }).refine(body => Object.keys(body).length > 0, { message: 'At least one field must be provided' });
 
-// ── FlagDefinition — evaluation-only subset (no metadata) ────────
-
-export const FlagDefinitionSchema = z.discriminatedUnion('type', [
-  z.object({ key: z.string(), type: z.literal('boolean'), rules: BooleanRulesSchema }),
-  z.object({ key: z.string(), type: z.literal('percentage'), rules: PercentageRulesSchema }),
-  z.object({ key: z.string(), type: z.literal('user_segmented'), rules: UserSegmentedRulesSchema }),
-]);
-
-export type FlagDefinition = z.infer<typeof FlagDefinitionSchema>;
-
 // ── Evaluate body ────────────────────────────────────────────────
 
 export const EvaluateBodySchema = z.object({
