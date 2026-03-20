@@ -11,6 +11,10 @@ vi.mock('../src/middleware/requireApiKey.js', () => ({
   requireApiKey: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
+vi.mock('../src/middleware/requireJwtOrApiKey.js', () => ({
+  requireJwtOrApiKey: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 const booleanFlag = {
   key: 'my-boolean-flag',
   name: 'My Boolean Flag',

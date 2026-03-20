@@ -11,8 +11,10 @@ import {
   PercentageRulesSchema,
   UserSegmentedRulesSchema,
   type Flag,
+  type FlagDefinition,
 } from '../../schemas/flag.schema.js';
 import { evaluate } from '../../evaluation/evaluate.js';
+import { computeEtag } from '../../utils/etag.js';
 
 export const flagsRouter = Router();
 
@@ -54,6 +56,26 @@ flagsRouter.post('/', requireJwt, async (req, res) => {
   }
 });
 
+// GET /flags/definitions — evaluation-only payloads for all flags (no metadata).
+// Must be registered before /:key to prevent "definitions" matching as a key parameter.
+flagsRouter.get('/definitions', requireJwtOrApiKey, async (req, res) => {
+  const filter: Record<string, unknown> = {};
+  if (typeof req.query.type === 'string') {
+    filter.type = req.query.type;
+  }
+  // Sort by key for a deterministic ETag regardless of insertion order.
+  const docs = await getFlagsCollection().find(filter).sort({ key: 1 }).toArray();
+  const flags = docs.map(doc => ({ key: doc.key, type: doc.type, rules: doc.rules })) as FlagDefinition[];
+
+  const etag = computeEtag(flags);
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).send();
+    return;
+  }
+  res.setHeader('ETag', etag);
+  res.json({ flags });
+});
+
 // GET /flags/:key
 flagsRouter.get('/:key', async (req, res) => {
   const doc = await getFlagsCollection().findOne({ key: req.params.key } as Parameters<ReturnType<typeof getFlagsCollection>['findOne']>[0]);
@@ -62,6 +84,24 @@ flagsRouter.get('/:key', async (req, res) => {
     return;
   }
   res.json(docToFlag(doc));
+});
+
+// GET /flags/:key/definition — evaluation-only payload for a single flag.
+flagsRouter.get('/:key/definition', requireJwtOrApiKey, async (req, res) => {
+  const doc = await getFlagsCollection().findOne({ key: req.params.key } as Parameters<ReturnType<typeof getFlagsCollection>['findOne']>[0]);
+  if (!doc) {
+    res.status(404).json({ error: 'Flag not found' });
+    return;
+  }
+
+  const definition = { key: doc.key, type: doc.type, rules: doc.rules } as FlagDefinition;
+  const etag = computeEtag(definition);
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).send();
+    return;
+  }
+  res.setHeader('ETag', etag);
+  res.json(definition);
 });
 
 // PATCH /flags/:key
