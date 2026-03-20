@@ -6,6 +6,29 @@ A self-hosted feature flag platform with a management dashboard, REST API, and T
 
 ---
 
+## Live demo
+
+| | URL |
+|---|---|
+| Management portal | https://feature-flags-web.vercel.app |
+| Demo app | https://feature-flags-demo-app-web.vercel.app |
+| API | https://feature-flags-qo1m.onrender.com |
+
+**Demo credentials:** The management portal uses Clerk for authentication. To get access, contact the developer for an invite.
+
+---
+
+## Known limitations & future improvements
+
+- **SSE is single-instance only** — the subscriber registry is in-process. A Redis pub/sub layer would be needed for horizontal scaling to guarantee all connected clients receive updates regardless of which instance handled the mutation.
+- **No `Last-Event-ID` replay** — the server does not buffer past events. Clients that disconnect miss events during the gap; the reconnect `refresh()` is the only gap-recovery mechanism.
+- **No SDK for other languages** — currently TypeScript/Node.js only. A Python or Go SDK would broaden applicability.
+- **API keys are unscoped** — all keys have full read access to all flags. A production system would want per-key flag scoping or environment separation (production vs. staging).
+- **No audit log** — flag changes are not tracked. A production system would want a history of who changed what and when, both for debugging rollouts and for compliance.
+- **Render cold starts** — the API and demo API are hosted on Render's free tier, which spins down instances after 15 minutes of inactivity. The first request after a cold start may take 30–60 seconds.
+
+---
+
 ## What's in the repo
 
 ```
