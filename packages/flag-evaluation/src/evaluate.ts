@@ -35,8 +35,8 @@ function matchesSegment(
 ): boolean {
   if (value === undefined) return false;
   switch (operator) {
-    case 'eq':       return value === values[0];
-    case 'neq':      return value !== values[0];
+    case 'eq':       return values.includes(value);
+    case 'neq':      return !values.includes(value);
     case 'in':       return values.includes(value);
     case 'not_in':   return !values.includes(value);
     case 'contains': return value.includes(values[0]);

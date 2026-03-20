@@ -94,16 +94,30 @@ describe('user_segmented flag', () => {
     expect(evaluate(flag)).toBe(false);
   });
 
-  it('operator: eq', () => {
+  it('operator: eq — single value', () => {
     const flag = makeSegmentedFlag([{ attribute: 'plan', operator: 'eq', values: ['pro'], result: true }], false);
     expect(evaluate(flag, { attributes: { plan: 'pro' } })).toBe(true);
     expect(evaluate(flag, { attributes: { plan: 'free' } })).toBe(false);
   });
 
-  it('operator: neq', () => {
+  it('operator: eq — multiple values match any (comma-separated entry)', () => {
+    const flag = makeSegmentedFlag([{ attribute: 'plan', operator: 'eq', values: ['pro', 'basic'], result: true }], false);
+    expect(evaluate(flag, { attributes: { plan: 'pro' } })).toBe(true);
+    expect(evaluate(flag, { attributes: { plan: 'basic' } })).toBe(true);
+    expect(evaluate(flag, { attributes: { plan: 'free' } })).toBe(false);
+  });
+
+  it('operator: neq — single value', () => {
     const flag = makeSegmentedFlag([{ attribute: 'plan', operator: 'neq', values: ['free'], result: true }], false);
     expect(evaluate(flag, { attributes: { plan: 'pro' } })).toBe(true);
     expect(evaluate(flag, { attributes: { plan: 'free' } })).toBe(false);
+  });
+
+  it('operator: neq — multiple values excludes all', () => {
+    const flag = makeSegmentedFlag([{ attribute: 'plan', operator: 'neq', values: ['free', 'basic'], result: true }], false);
+    expect(evaluate(flag, { attributes: { plan: 'pro' } })).toBe(true);
+    expect(evaluate(flag, { attributes: { plan: 'free' } })).toBe(false);
+    expect(evaluate(flag, { attributes: { plan: 'basic' } })).toBe(false);
   });
 
   it('operator: in', () => {
