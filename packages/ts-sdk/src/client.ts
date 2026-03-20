@@ -1,3 +1,4 @@
+import type { FlagDefinition } from "@feature-flags/flag-evaluation";
 import type { EvaluationContext, FeatureFlagClientOptions } from "./types.js";
 import { FeatureFlagError } from "./types.js";
 
@@ -41,5 +42,93 @@ export class FeatureFlagClient {
 
     const data = await response.json() as { key: string; result: boolean };
     return data.result;
+  }
+
+  /**
+   * Fetch evaluation-only payloads for all flags.
+   *
+   * Returns `{ flags, etag }` on 200 OK.
+   * Returns `null` on 304 Not Modified — the caller's cached copy is still current.
+   * Throws `FeatureFlagError` on any other non-2xx response.
+   */
+  async getDefinitions(opts?: {
+    type?: "boolean" | "percentage" | "user_segmented";
+    ifNoneMatch?: string;
+  }): Promise<{ flags: FlagDefinition[]; etag: string } | null> {
+    const url = new URL(`${this.baseUrl}/flags/definitions`);
+    if (opts?.type) url.searchParams.set("type", opts.type);
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+    };
+    if (opts?.ifNoneMatch) headers["If-None-Match"] = opts.ifNoneMatch;
+
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), { headers });
+    } catch (err) {
+      throw new FeatureFlagError(
+        err instanceof Error ? err.message : "Network request failed"
+      );
+    }
+
+    if (response.status === 304) return null;
+
+    if (!response.ok) {
+      let message = `Request failed with status ${response.status}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.error === "string") message = body.error;
+      } catch { /* ignore */ }
+      throw new FeatureFlagError(message, response.status);
+    }
+
+    const etag = response.headers.get("ETag") ?? "";
+    const data = await response.json() as { flags: FlagDefinition[] };
+    return { flags: data.flags, etag };
+  }
+
+  /**
+   * Fetch the evaluation-only payload for a single flag.
+   *
+   * Returns `{ flag, etag }` on 200 OK.
+   * Returns `null` on 304 Not Modified.
+   * Throws `FeatureFlagError` on any other non-2xx response.
+   */
+  async getDefinition(
+    flagKey: string,
+    opts?: { ifNoneMatch?: string }
+  ): Promise<{ flag: FlagDefinition; etag: string } | null> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+    };
+    if (opts?.ifNoneMatch) headers["If-None-Match"] = opts.ifNoneMatch;
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.baseUrl}/flags/${flagKey}/definition`,
+        { headers }
+      );
+    } catch (err) {
+      throw new FeatureFlagError(
+        err instanceof Error ? err.message : "Network request failed"
+      );
+    }
+
+    if (response.status === 304) return null;
+
+    if (!response.ok) {
+      let message = `Request failed with status ${response.status}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.error === "string") message = body.error;
+      } catch { /* ignore */ }
+      throw new FeatureFlagError(message, response.status);
+    }
+
+    const etag = response.headers.get("ETag") ?? "";
+    const flag = await response.json() as FlagDefinition;
+    return { flag, etag };
   }
 }
