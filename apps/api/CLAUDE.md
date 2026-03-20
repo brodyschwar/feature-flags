@@ -156,6 +156,7 @@ All flags share the same routes — the `type` field in the request body is the 
 | `PATCH` | `/flags/:key` | JWT | Update a flag's `rules` and/or metadata (`name`, `description`). Flag `type` is immutable — delete and recreate if the type must change. |
 | `DELETE` | `/flags/:key` | JWT | Delete a flag. |
 | `POST` | `/flags/:key/evaluate` | JWT or API key | Evaluate a flag. See below. |
+| `GET` | `/flags/stream` | JWT or API key | SSE stream of flag change events. Clients receive `flag_updated` and `flag_deleted` events in real time. Supports `?keys=` filter. See Live Flag Updates below. |
 
 ### Evaluation
 
@@ -493,3 +494,110 @@ afterAll(async () => {
   await mongo.stop();
 });
 ```
+
+---
+
+## Live Flag Updates (SSE)
+
+### Overview
+
+`GET /flags/stream` is a long-lived Server-Sent Events endpoint. Connected SDK clients receive `flag_updated` and `flag_deleted` events in real time whenever a flag is mutated through the API, eliminating the need to discover changes through TTL-based polling alone.
+
+### Endpoint
+
+```
+GET /flags/stream?keys=flag-a,flag-b
+Authorization: Bearer ff_<apiKey>
+Accept: text/event-stream
+```
+
+The `?keys=` parameter (comma-separated, same semantics as `GET /flags/definitions`) scopes the subscription to a specific set of flag keys. If omitted, the client receives events for all flags.
+
+The server responds with:
+```
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+```
+
+### Event types
+
+All event data is JSON.
+
+**`connected`** — sent once immediately after the connection is established. Confirms the subscription is active and echoes back the subscribed keys.
+
+```
+event: connected
+data: { "subscribedKeys": ["flag-a", "flag-b"] }
+```
+
+**`flag_updated`** — sent after a successful `POST /flags` (create) or `PATCH /flags/:key` when the affected flag key is in the subscriber's set. The payload is the full `FlagDefinition` — the client can update its cache directly without a follow-up HTTP request.
+
+```
+event: flag_updated
+data: { "key": "flag-a", "type": "boolean", "rules": { "enabled": false } }
+```
+
+**`flag_deleted`** — sent after a successful `DELETE /flags/:key` when the affected flag key is in the subscriber's set.
+
+```
+event: flag_deleted
+data: { "key": "flag-a" }
+```
+
+**`heartbeat`** — sent every 30 seconds to keep the connection alive and allow clients to detect a silently dropped connection. No data payload.
+
+```
+event: heartbeat
+data: {}
+```
+
+### Server-side implementation
+
+The server maintains an in-memory registry of active SSE response objects. The registry is a `Map<string, Set<SseClient>>` keyed by flag key, allowing efficient fan-out: when a flag mutation occurs, only clients subscribed to that key are notified.
+
+```ts
+// Conceptual structure inside flags.router.ts
+interface SseClient {
+  res: express.Response;
+  keys: Set<string>;       // the flag keys this client subscribed to
+}
+
+const sseClients = new Set<SseClient>();
+
+function notifyFlagUpdated(definition: FlagDefinition): void {
+  for (const client of sseClients) {
+    if (client.keys.size === 0 || client.keys.has(definition.key)) {
+      client.res.write(`event: flag_updated\ndata: ${JSON.stringify(definition)}\n\n`);
+    }
+  }
+}
+```
+
+`notifyFlagUpdated` is called at the end of each `PATCH` and `POST` handler (after the DB write succeeds). `notifyFlagDeleted` is called at the end of each `DELETE` handler.
+
+Clients are removed from the registry when the SSE connection closes (`res.on("close", ...)`) or on a write error.
+
+### Authentication
+
+Same `requireJwtOrApiKey` middleware used on the evaluate and definitions endpoints — both Clerk JWTs and `ff_` API keys are accepted.
+
+### ⚠ Critical deployment limitation: single-process only
+
+The subscriber registry lives in the memory of a single API process. **This means live updates only work reliably when the API runs as a single instance.**
+
+In a multi-instance deployment (multiple API servers behind a load balancer):
+
+- A flag update handled by **instance A** notifies only the clients connected to **instance A**.
+- Clients connected to **instances B and C** receive no event and remain stale until their next TTL-triggered poll.
+
+**This is a known architectural constraint of the current design.** Resolving it requires a pub/sub layer (e.g., Redis pub/sub or a message queue) so that any instance can broadcast to all connected clients regardless of which instance processed the mutation. That is out of scope for the current implementation.
+
+**Acceptable deployments for live updates:** local development, single-instance production servers. Any horizontally-scaled deployment should treat live updates as a best-effort optimisation and rely on TTL polling as the authoritative freshness mechanism.
+
+### No event buffering / `Last-Event-ID`
+
+The server does not buffer past events. If a client disconnects and reconnects, it will not receive events that fired during the gap — the SSE `Last-Event-ID` replay mechanism is not implemented.
+
+Gap recovery is the client's responsibility: the SDK performs a full `GET /flags/definitions` refresh immediately on reconnect to bring the cache up to date before resuming event-driven updates.

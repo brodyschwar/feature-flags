@@ -546,26 +546,258 @@ Mock `FeatureFlagClient` directly (inject a mock instance). Test:
 
 ---
 
-## Future Development
+## v3: Live Flag Updates via SSE
 
-### Real-time flag update notifications (SSE)
+### Motivation
 
-The goal is to allow SDK consumers to subscribe to flag changes and react without polling. When a flag is updated via the API, connected SDK clients should be notified immediately.
+v2's TTL-based polling means a flag change takes up to `ttl` milliseconds to reach a running service. For most workloads this is acceptable, but some use cases need faster propagation — a kill-switch that disables a broken feature should take effect in seconds, not minutes.
 
-Likely shape:
+v3 adds an opt-in live-update mode to `CachedFlagEvaluator`. When enabled, the evaluator opens a persistent SSE connection to `GET /flags/stream` and updates its cache immediately when the API pushes a `flag_updated` or `flag_deleted` event. TTL polling continues to run as a backstop.
+
+---
+
+### `FeatureFlagClient` additions
+
+#### `client.streamDefinitions(opts?)`
+
+Opens an SSE connection to `GET /flags/stream` and returns an `AsyncIterable` of parsed events. This is a low-level method — most callers should use `CachedFlagEvaluator` with `liveUpdates: true` instead of calling this directly.
 
 ```ts
-const unsubscribe = client.onFlagUpdated("new-transaction-flow", (result) => {
-  // re-evaluate or update local state
-  console.log("flag changed:", result);
-});
+interface FlagStreamEvent =
+  | { type: "flag_updated"; definition: FlagDefinition }
+  | { type: "flag_deleted"; key: string }
+  | { type: "heartbeat" };
 
-// later
-unsubscribe();
+streamDefinitions(opts?: {
+  /** Scope the subscription to specific flag keys. */
+  keys?: string[];
+  /** AbortSignal to cancel the stream. */
+  signal?: AbortSignal;
+}): AsyncIterable<FlagStreamEvent>
 ```
 
-Implementation notes (to be decided during design):
-- API would expose a `GET /flags/:key/stream` SSE endpoint; SDK connects and listens for update events.
-- `onFlagUpdated` manages the `EventSource` (or `fetch` with a streaming body in Node) and calls the callback with the new evaluated result when an event arrives.
-- Connection lifecycle (reconnect on drop, cleanup on unsubscribe) needs to be designed carefully.
-- This will require the API to push events — the backend design should be planned alongside the SDK interface.
+Throws `FeatureFlagError` if the initial connection is rejected (non-2xx). Silently ends the iterable when the `signal` is aborted.
+
+**Node.js compatibility:** Node.js does not have a native `EventSource` API before v22. The implementation uses `fetch()` with a `ReadableStream` (available in Node 18+) to parse the SSE wire format without adding a runtime dependency.
+
+---
+
+### `CachedFlagEvaluator` additions
+
+#### Updated `CachedFlagEvaluatorOptions<T>`
+
+```ts
+interface CachedFlagEvaluatorOptions<T extends string> {
+  client: FeatureFlagClient;
+  flags: readonly T[];
+  ttl?: number;
+  staleWhileRevalidate?: boolean;
+  /**
+   * When true, the evaluator opens a persistent SSE connection to
+   * GET /flags/stream and updates its cache immediately on flag changes.
+   * TTL polling continues to run as a backstop.
+   *
+   * Default: false. When false, the evaluator uses TTL polling only.
+   */
+  liveUpdates?: boolean;
+}
+```
+
+#### New public methods
+
+```ts
+/**
+ * Open the SSE connection. Idempotent — calling while already connected
+ * is a no-op.
+ *
+ * When liveUpdates is true, warm() calls this automatically after
+ * populating the cache.
+ */
+connect(): void;
+
+/**
+ * Close the SSE connection and cancel any pending reconnect timer.
+ * The cache is preserved. The evaluator falls back to TTL polling.
+ * Safe to call when not connected.
+ */
+disconnect(): void;
+```
+
+#### Behaviour when `liveUpdates: true`
+
+**On `flag_updated` event:**
+The incoming `FlagDefinition` is written directly into the cache and `fetchedAt` is reset to now. No HTTP call is made — the event payload is the authoritative update. The TTL window restarts from this point.
+
+**On `flag_deleted` event:**
+The flag is removed from the cache. The next `evaluate()` call for that key falls back to `getDefinition(key)`, which will return 404 and throw `FeatureFlagError`. `safeEvaluate()` will return its `defaultValue`.
+
+**On `heartbeat` event:**
+No action. The heartbeat's purpose is connection keep-alive; the SDK ignores it beyond confirming the connection is still live.
+
+**On connection error or drop:**
+The cache is **not** cleared. The evaluator continues serving cached values while reconnecting. A reconnect is scheduled with exponential backoff (see below). When the connection is re-established, `refresh()` is called immediately to fill any gap before resuming event-driven updates.
+
+---
+
+### Reconnection strategy
+
+On any connection failure (initial or mid-stream):
+
+1. The current cached values continue to be served — no degradation in evaluate() behavior.
+2. A reconnect is scheduled after a delay that doubles on each successive failure, starting at 1 second and capped at 30 seconds: `1s → 2s → 4s → 8s → 16s → 30s → 30s → ...`
+3. On reconnect success:
+   a. `refresh()` is called first to fill events missed during the gap.
+   b. The SSE stream resumes.
+   c. The backoff delay is reset to 1 second.
+4. `disconnect()` cancels any pending reconnect timer. Calling `connect()` again after a `disconnect()` restarts the process with a fresh backoff.
+
+**No `Last-Event-ID` replay.** The server does not buffer past events. The reconnect `refresh()` (a full `GET /flags/definitions` HTTP call) is the sole gap-recovery mechanism.
+
+#### Internal state additions
+
+```ts
+// Inside CachedFlagEvaluator<T>
+private liveUpdates: boolean;
+private abortController: AbortController | null = null;  // cancels the active stream
+private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+private reconnectDelay: number = 1_000; // ms; doubles on failure, capped at 30_000
+```
+
+---
+
+### TTL as backstop
+
+Even with `liveUpdates: true`, TTL polling continues unchanged. This ensures:
+
+- Changes missed during a disconnect gap are eventually picked up even if the reconnect `refresh()` fails.
+- A permanently disconnected evaluator (e.g., `disconnect()` was called) still refreshes its cache periodically.
+
+**Recommended TTL when using live updates:** 5 minutes (`300_000` ms). Live events handle real-time propagation; the TTL is a safety net and fires rarely.
+
+---
+
+### Usage
+
+```ts
+const evaluator = new CachedFlagEvaluator({
+  client,
+  flags: ["new-transaction-flow", "kill-switch"] as const,
+  ttl: 300_000,      // 5-minute backstop
+  liveUpdates: true, // real-time updates via SSE
+});
+
+// warm() populates the cache via HTTP then automatically calls connect()
+await evaluator.warm();
+
+// evaluate() now reflects flag changes within milliseconds of the API update
+const enabled = await evaluator.evaluate("new-transaction-flow", { userId: "u1" });
+
+// On graceful shutdown — close the SSE connection
+evaluator.disconnect();
+```
+
+---
+
+### Consistency risks and known limitations
+
+These limitations must be understood before deploying with `liveUpdates: true`.
+
+#### 1. Multi-instance API deployment — critical
+
+**This is the most significant limitation.**
+
+The API's subscriber registry lives in the memory of a single process. In a multi-instance deployment (e.g., two API servers behind a load balancer), a flag update processed by instance A notifies only the SDK clients connected to instance A. Clients connected to instance B receive no event and remain stale until their next TTL poll.
+
+**Impact:** In a load-balanced deployment, live updates provide best-effort propagation to a fraction of connected clients, not all of them. TTL polling is the only mechanism that guarantees eventual consistency across all instances.
+
+**Mitigation (not implemented):** A pub/sub layer (Redis pub/sub, a message broker) would allow any API instance to broadcast to all connected clients. This is out of scope for the current design.
+
+**Acceptable deployments:** Single-instance API servers. Any horizontally-scaled deployment should treat live updates as a latency optimisation, not a correctness guarantee.
+
+#### 2. Missed events during a disconnect gap
+
+Between the moment the SSE connection drops and the moment the reconnect `refresh()` completes, the evaluator's cache may be stale. The TTL will eventually catch this, but there is a window where evaluate() returns an outdated value.
+
+The window length is: `reconnect backoff delay + time for refresh() HTTP call to complete`. In the worst case (multiple successive failures at max backoff), this can be several minutes.
+
+**Mitigation:** The reconnect `refresh()` fills the gap as soon as connectivity is restored. TTL polling ensures correctness even if the evaluator never reconnects.
+
+#### 3. No delivery acknowledgement
+
+SSE is one-way and fire-and-forget. The server writes an event to the socket and has no way to confirm the client received it. There is no per-event retry mechanism. A network packet loss event that silently drops a write (without closing the connection) could cause an event to be lost without the client or server knowing.
+
+**Mitigation:** In practice, TCP retransmission handles transient packet loss. The TTL backstop handles cases where an event is genuinely lost at a higher level. This risk is low but non-zero.
+
+#### 4. Event ordering under rapid successive updates
+
+If a flag is updated twice in quick succession (faster than the TCP round-trip time), events may theoretically arrive out of order at the client. The cache uses last-write-wins semantics, so an out-of-order delivery would leave the cache holding a non-latest value until the next TTL refresh or subsequent event.
+
+**Mitigation:** In practice, the API processes mutations serially per request and TCP preserves order within a single connection. This is a theoretical risk. A sequence number on events could allow clients to detect and discard out-of-order events — not implemented in v3.
+
+#### 5. API restart drops all connections
+
+When the API server restarts, all SSE connections are closed. All connected evaluators enter the reconnect loop simultaneously, triggering a thundering herd of `refresh()` HTTP calls when the API comes back up. The evaluators' single-flight coalescing prevents multiple concurrent refresh calls per evaluator instance, but each instance (i.e., each running service) will still make one call.
+
+**Mitigation:** The exponential backoff spreads reconnect attempts over time. If many services reconnect simultaneously, the API's normal request handling capacity applies.
+
+#### 6. Flag creation of a subscribed key
+
+If a flag is created with a key that is in the evaluator's `flags` array, a `flag_updated` event is sent (creation and update use the same event type). The evaluator receives and caches it correctly.
+
+#### 7. Proxy and load balancer connection timeouts
+
+Some HTTP proxies and load balancers aggressively close idle connections (e.g., AWS ALB defaults to 60 seconds). The server's 30-second heartbeat is designed to keep the connection active, but a proxy with a shorter idle timeout will silently close the connection. The SDK will detect the drop and reconnect, but this may cause frequent reconnect cycles in such environments.
+
+**Mitigation:** Configure the proxy/load balancer idle timeout to exceed 30 seconds, or reduce the heartbeat interval. Check your infrastructure's timeout settings before enabling live updates in production.
+
+#### 8. One persistent connection per evaluator instance
+
+Each `CachedFlagEvaluator` instance with `liveUpdates: true` maintains one persistent HTTP connection to the API. The recommended singleton pattern (one module-level evaluator per process) means one connection per service process. Services that create multiple evaluator instances per process will create a proportional number of connections.
+
+---
+
+### Updated project structure (v3)
+
+```
+packages/ts-sdk/
+├── src/
+│   ├── index.ts              # Adds connect/disconnect to exports
+│   ├── client.ts             # Adds streamDefinitions()
+│   ├── cached-evaluator.ts   # Adds liveUpdates, connect(), disconnect()
+│   └── types.ts              # Adds FlagStreamEvent, liveUpdates option
+│
+├── tests/
+│   ├── client.test.ts        # Adds streamDefinitions() tests
+│   ├── cached-evaluator.test.ts
+│   └── cached-evaluator-live.test.ts  # NEW — live update behaviour
+```
+
+---
+
+### Testing strategy (v3)
+
+All tests remain unit tests — no real HTTP.
+
+**`tests/client.test.ts`**
+Mock `fetch` to return a `ReadableStream` that emits SSE lines. Verify:
+- `flag_updated` events yield the correct `FlagStreamEvent`
+- `flag_deleted` events yield the correct `FlagStreamEvent`
+- `heartbeat` events yield the correct `FlagStreamEvent`
+- Aborting via `signal` ends the iterable cleanly
+- A non-2xx initial response throws `FeatureFlagError`
+
+**`tests/cached-evaluator-live.test.ts`**
+Inject a mock `FeatureFlagClient` whose `streamDefinitions()` returns a controllable async iterable. Test:
+
+| Scenario | What to verify |
+|---|---|
+| `flag_updated` event received | Cache entry updated immediately; no HTTP call made |
+| `flag_deleted` event received | Cache entry removed; next `evaluate()` falls back to `getDefinition()` |
+| `heartbeat` event received | No cache change; no HTTP call |
+| Connection error | Cache preserved; reconnect scheduled |
+| Reconnect success | `refresh()` called before stream resumes |
+| Exponential backoff | Reconnect delays double on successive failures, cap at 30s |
+| `disconnect()` | Pending reconnect timer cancelled; stream aborted |
+| `connect()` while connected | No-op; `streamDefinitions()` not called again |
+| `warm()` with `liveUpdates: true` | Calls `connect()` after cache is populated |
+| Rapid successive `flag_updated` events for same key | Cache holds the value from the last event received |
