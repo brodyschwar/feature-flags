@@ -4,10 +4,15 @@ import { apiKeysRouter } from './routes/apiKeys/apiKeys.router.js';
 
 const app = express();
 
-const ALLOWED_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGIN ?? 'http://localhost:5173,http://localhost:5174')
+  .split(',')
+  .map((o) => o.trim());
 
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') {

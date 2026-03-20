@@ -4,6 +4,8 @@
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:api": "pnpm --filter api dev",
+    "dev:demo-api": "pnpm --filter demo-app-api dev",
+    "dev:demo-web": "pnpm --filter demo-app-web dev",
     "test:api": "pnpm --filter api test",
     "build:sdk": "pnpm --filter @feature-flags/ts-sdk build",
     "test:sdk": "pnpm --filter @feature-flags/ts-sdk test",
