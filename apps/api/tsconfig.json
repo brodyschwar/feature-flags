@@ -7,11 +7,7 @@
     "outDir": "dist",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true,
-    "baseUrl": ".",
-    "paths": {
-      "@feature-flags/flag-evaluation": ["../../packages/flag-evaluation/src/index.ts"]
-    }
+    "skipLibCheck": true
   },
   "include": ["src"]
 }

@@ -51,7 +51,7 @@ flagsRouter.post('/', requireJwt, async (req, res) => {
 
   try {
     await getFlagsCollection().insertOne(doc as Parameters<ReturnType<typeof getFlagsCollection>['insertOne']>[0]);
-    notifyFlagUpdated({ key: body.key, type: body.type, rules: body.rules });
+    notifyFlagUpdated({ key: body.key, type: body.type, rules: body.rules } as FlagDefinition);
     res.status(201).json({ ...body, id, createdAt: now, updatedAt: now });
   } catch (err: unknown) {
     if (typeof err === 'object' && err !== null && 'code' in err && (err as { code: number }).code === 11000) {
@@ -189,7 +189,7 @@ flagsRouter.delete('/:key', requireJwt, async (req, res) => {
     res.status(404).json({ error: 'Flag not found' });
     return;
   }
-  notifyFlagDeleted(req.params.key);
+  notifyFlagDeleted(req.params.key as string);
   res.status(204).send();
 });
 
